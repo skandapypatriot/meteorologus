@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../predictions"
+		},
+		{
+			"name": "heartbeat test",
+			"path": "../../../../Documents/PlatformIO/Projects/heartbeat test"
+		}
+	]
+}

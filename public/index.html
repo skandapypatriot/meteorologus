@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Atmosphere AI | Dynamic Weather</title>
+    <script src="https://cdn.jsdelivr.net/particles.js/2.0.0/particles.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --glass: rgba(255, 255, 255, 0.16);
+            --glass-strong: rgba(255, 255, 255, 0.24);
+            --text-main: #f7fbff;
+            --shadow: 0 18px 40px rgba(7, 14, 35, 0.22);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            color: var(--text-main);
+            min-height: 100vh;
+            transition: background 1.8s ease;
+            overflow-x: hidden;
+            position: relative;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: radial-gradient(circle at top right, rgba(255,255,255,0.14), transparent 35%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .clear { background: linear-gradient(135deg, #1e3c72, #2a5298); }
+        .sunny { background: linear-gradient(135deg, #4fc3f7, #1e88e5 50%, #ffd54f); }
+        .slightly-cloudy { background: linear-gradient(135deg, #8da9c4, #cfdbe7 80%); }
+        .cloudy { background: linear-gradient(135deg, #4a5568, #2d3748); }
+        .light-rain { background: linear-gradient(135deg, #536d7f, #37474f); }
+        .rain { background: linear-gradient(135deg, #37474f, #1e272e); }
+        .heavy-rain { background: linear-gradient(135deg, #16202a, #0f172a); animation: downpour 4s infinite ease-in-out; }
+
+        @keyframes downpour {
+            0%, 100% { filter: brightness(1); }
+            50% { filter: brightness(1.08); }
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 40px auto;
+            padding: 0 20px;
+            position: relative;
+            z-index: 10;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 32px;
+            gap: 20px;
+        }
+
+        header h1 {
+            font-size: 2.3rem;
+            font-weight: 300;
+            letter-spacing: -1px;
+            text-shadow: 0 2px 12px rgba(0,0,0,0.25);
+        }
+
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+
+        .card {
+            padding: 28px;
+            border-radius: 24px;
+            border: 1px solid rgba(255,255,255,0.22);
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            background: var(--glass);
+        }
+
+        .stat { font-size: 3rem; font-weight: 700; margin-top: 10px; }
+        .unit { font-size: 1.1rem; opacity: 0.7; }
+
+        #particles-js { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+
+        #character-container {
+            position: fixed;
+            bottom: 5%;
+            right: 15%;
+            z-index: 2;
+            opacity: 0.9;
+            animation: breathe 4s infinite ease-in-out;
+        }
+
+        @keyframes breathe {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+        }
+
+        canvas#weatherChart { width: 100% !important; height: 250px !important; }
+    </style>
+</head>
+<body class="sunny">
+    
+    <div id="particles-js"></div>
+
+    <div id="character-container">
+        <svg viewBox="0 0 150 200" width="150" height="200">
+            <g id="umbrella" style="display: none; transition: all 0.5s;">
+                <path d="M 10 70 Q 75 10 140 70 Z" fill="#ff5252"/>
+                <rect x="73" y="70" width="4" height="60" fill="#ddd"/>
+                <path d="M 73 130 Q 75 145 85 135" stroke="#ddd" stroke-width="4" fill="none"/>
+            </g>
+            <circle cx="75" cy="80" r="15" fill="#ffffff" />
+            <rect x="65" y="100" width="20" height="50" rx="10" fill="#ffffff" />
+            <rect x="65" y="145" width="8" height="40" rx="4" fill="#ffffff" />
+            <rect x="77" y="145" width="8" height="40" rx="4" fill="#ffffff" />
+        </svg>
+    </div>
+
+    <div class="container">
+        <header>
+            <h1 id="weather-status">Awakening AI...</h1>
+            <div id="clock" style="font-weight: 300; font-size: 1.5rem;">--:--:--</div>
+        </header>
+
+        <div class="grid">
+            <div class="card">
+                <p style="opacity: 0.8; font-weight: 600;">TEMPERATURE</p>
+                <div class="stat"><span id="temp">--</span><span class="unit">°C</span></div>
+            </div>
+            <div class="card">
+                <p style="opacity: 0.8; font-weight: 600;">HUMIDITY</p>
+                <div class="stat"><span id="hum">--</span><span class="unit">%</span></div>
+            </div>
+            <div class="card">
+                <p style="opacity: 0.8; font-weight: 600;">AI 3-DAY OUTLOOK</p>
+                <div id="forecast-outlook" style="margin-top: 15px; font-size: 1.1rem; line-height: 1.8;">
+                    Syncing neural network...
+                </div>
+            </div>
+        </div>
+
+        <div class="card" style="margin-top: 20px;">
+            <canvas id="weatherChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const FIREBASE_URL = "https://weather-monitor-f4248-default-rtdb.asia-southeast1.firebasedatabase.app/sensor.json";
+        
+        // Simplified WMO-style weather states for the UI
+        const weatherMap = {
+            0: { class: 'clear', label: 'Clear', emoji: '☀️', pNum: 18, pSpeed: 0.7, pShape: 'circle' },
+            1: { class: 'sunny', label: 'Sunny', emoji: '☀️', pNum: 24, pSpeed: 0.8, pShape: 'circle' },
+            2: { class: 'slightly-cloudy', label: 'Slightly Cloudy', emoji: '🌤️', pNum: 42, pSpeed: 0.9, pShape: 'circle' },
+            3: { class: 'cloudy', label: 'Cloudy', emoji: '☁️', pNum: 70, pSpeed: 1.1, pShape: 'circle' },
+            45: { class: 'cloudy', label: 'Cloudy', emoji: '☁️', pNum: 70, pSpeed: 0.8, pShape: 'circle' },
+            48: { class: 'cloudy', label: 'Cloudy', emoji: '☁️', pNum: 70, pSpeed: 0.8, pShape: 'circle' },
+            51: { class: 'light-rain', label: 'Light Rain', emoji: '🌦️', pNum: 120, pSpeed: 8, pShape: 'edge' },
+            53: { class: 'rain', label: 'Rain', emoji: '🌧️', pNum: 160, pSpeed: 12, pShape: 'edge' },
+            55: { class: 'heavy-rain', label: 'Heavy Rain', emoji: '⛈️', pNum: 220, pSpeed: 18, pShape: 'edge' },
+            61: { class: 'light-rain', label: 'Light Rain', emoji: '🌦️', pNum: 120, pSpeed: 8, pShape: 'edge' },
+            63: { class: 'rain', label: 'Rain', emoji: '🌧️', pNum: 160, pSpeed: 12, pShape: 'edge' },
+            65: { class: 'heavy-rain', label: 'Heavy Rain', emoji: '⛈️', pNum: 220, pSpeed: 18, pShape: 'edge' },
+            80: { class: 'rain', label: 'Rain', emoji: '🌧️', pNum: 160, pSpeed: 12, pShape: 'edge' },
+            81: { class: 'heavy-rain', label: 'Heavy Rain', emoji: '⛈️', pNum: 220, pSpeed: 18, pShape: 'edge' }
+        };
+
+        function getParsedScene(code) {
+            if (weatherMap[code] !== undefined) return weatherMap[code];
+
+            const numCode = parseInt(code, 10);
+            if (!isNaN(numCode)) {
+                if (numCode === 0) return weatherMap[0];
+                if (numCode === 1) return weatherMap[1];
+                if (numCode === 2) return weatherMap[2];
+                if (numCode >= 3 && numCode <= 49) return weatherMap[3];
+                if ((numCode >= 51 && numCode <= 55) || (numCode >= 61 && numCode <= 65) || (numCode >= 80 && numCode <= 82)) {
+                    return numCode >= 55 || numCode >= 65 || numCode >= 82 ? weatherMap[55] : weatherMap[51];
+                }
+            }
+            return weatherMap[0];
+        }
+
+        async function fetchData() {
+            try {
+                const res = await fetch(FIREBASE_URL);
+                const data = await res.json();
+                if (!data) return;
+                
+                const readings = Object.values(data).sort((a,b) => a.ts - b.ts).slice(-30);
+                const latest = readings[readings.length - 1];
+
+                document.getElementById('temp').innerText = latest.t;
+                document.getElementById('hum').innerText = latest.h;
+
+                if (latest.weather_code !== undefined) {
+                    updateScene(latest.weather_code);
+
+                    if (latest.forecast) {
+                        document.getElementById('forecast-outlook').innerHTML = latest.forecast.map((c, i) => {
+                            const scene = getParsedScene(c);
+                            return `Day ${i + 1}: <strong>${scene.emoji} ${scene.label}</strong>`;
+                        }).join('<br>');
+                    }
+                }
+
+                updateChart(readings);
+            } catch(e) { console.error("Database sync failed:", e); }
+        }
+        function updateScene(code) {
+            const info = getParsedScene(code);
+
+            document.body.className = info.class;
+            document.getElementById('weather-status').innerText = `${info.emoji} ${info.label}`;
+
+            const umbrella = document.getElementById('umbrella');
+            const requiresUmbrella = info.pShape === 'edge';
+            umbrella.style.display = requiresUmbrella ? 'block' : 'none';
+
+            particlesJS("particles-js", {
+                particles: {
+                    number: { value: info.pNum },
+                    color: { value: "#ffffff" },
+                    shape: { type: info.pShape },
+                    opacity: { value: 0.35 },
+                    size: { value: info.pShape === 'edge' ? 1.5 : 3 },
+                    move: {
+                        enable: true,
+                        speed: info.pSpeed,
+                        direction: requiresUmbrella ? "bottom" : "none",
+                        straight: requiresUmbrella
+                    }
+                }
+            });
+        }
+        function updateChart(readings) {
+            const ctx = document.getElementById('weatherChart').getContext('2d');
+            const data = {
+                labels: readings.map(r => {
+                    const d = new Date(r.ts * 1000);
+                    return `${d.getHours()}:${d.getMinutes().toString().padStart(2, '0')}`;
+                }),
+                datasets: [
+                    { label: 'Temperature (°C)', data: readings.map(r => r.t), borderColor: '#ff9800', backgroundColor: 'rgba(255, 152, 0, 0.1)', fill: true, tension: 0.4 },
+                    { label: 'Humidity (%)', data: readings.map(r => r.h), borderColor: '#40c4ff', backgroundColor: 'rgba(64, 196, 255, 0.1)', fill: true, tension: 0.4 }
+                ]
+            };
+            if (chart) { 
+                chart.data = data; 
+                chart.update(); 
+            } else { 
+                chart = new Chart(ctx, { 
+                    type: 'line', 
+                    data, 
+                    options: { 
+                        maintainAspectRatio: false,
+                        plugins: { legend: { labels: { color: 'white' } } },
+                        scales: {
+                            x: { ticks: { color: 'rgba(255,255,255,0.7)' }, grid: { color: 'rgba(255,255,255,0.1)' } },
+                            y: { ticks: { color: 'rgba(255,255,255,0.7)' }, grid: { color: 'rgba(255,255,255,0.1)' } }
+                        }
+                    } 
+                }); 
+            }
+        }
+
+        // Init
+        updateScene(0);
+        setInterval(fetchData, 30000);
+        setInterval(() => document.getElementById('clock').innerText = new Date().toLocaleTimeString(), 1000);
+        fetchData();
+    </script>
+</body>
+</html>
