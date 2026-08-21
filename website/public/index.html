@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meteorologus — Dashboard</title>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: #0f172a; color: #e2e8f0;
+      display: flex; justify-content: center; padding: 2rem 1rem;
+    }
+    main { width: 100%; max-width: 720px; }
+    h1 { font-size: 1.6rem; margin: 0 0 .25rem; display: flex; align-items: center; justify-content: space-between; }
+    h2 { font-size: 1.15rem; margin: 0 0 .5rem; }
+    p.sub { color: #94a3b8; margin-top: 0; }
+    .card {
+      background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+      padding: 1.25rem; margin-top: 1.25rem;
+    }
+    .mac {
+      font-family: ui-monospace, monospace; letter-spacing: 2px;
+      background: #0f172a; border: 1px solid #334155; border-radius: 8px;
+      padding: .5rem .75rem; display: inline-block; margin: 0 0 .5rem;
+    }
+    label { display: block; font-size: .85rem; color: #94a3b8; margin: .75rem 0 .25rem; }
+    input {
+      width: 100%; padding: .6rem .75rem; border-radius: 8px;
+      border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 1rem;
+    }
+    button {
+      width: 100%; margin-top: 1rem; padding: .7rem; border: 0; border-radius: 8px;
+      background: #3b82f6; color: #fff; font-size: 1rem; font-weight: 600; cursor: pointer;
+    }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    button.ghost { background: transparent; border: 1px solid #475569; color: #cbd5e1; }
+    button.inline { width: auto; padding: .4rem .8rem; margin-top: 0; font-size: .85rem; }
+    .msg { margin-top: .75rem; font-size: .9rem; min-height: 1.1em; }
+    .msg.ok { color: #4ade80; }
+    .msg.err { color: #f87171; }
+    .hidden { display: none; }
+    a { color: #60a5fa; }
+    .row { display: flex; flex-wrap: wrap; gap: 1.25rem; }
+    .stat { flex: 1 1 100px; }
+    .stat .v { font-size: 1.5rem; font-weight: 600; }
+    .stat .k { font-size: .75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
+    .badges { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .75rem; }
+    .badge { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: .35rem .6rem; font-size: .8rem; }
+    .badge b { display: block; font-size: .65rem; color: #94a3b8; font-weight: 600; }
+    svg { width: 100%; height: 64px; display: block; margin-top: .75rem; background: #0f172a; border-radius: 8px; }
+    .empty { color: #94a3b8; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>
+      <span>Meteorologus</span>
+      <span>
+        <button class="ghost inline hidden" id="refresh-btn">Refresh</button>
+        <button class="ghost inline hidden" id="signout-btn">Sign out</button>
+      </span>
+    </h1>
+    <p class="sub" id="subtitle">Your personal weather node.</p>
+
+    <div class="card hidden" id="hero-card">
+      <h2>Your weather, on your device</h2>
+      <p>Sign in to see your weather nodes, live readings and the forecast prediction.</p>
+      <p class="empty">New node? Scan its QR code to open the claim page.</p>
+    </div>
+
+    <div class="card hidden" id="device-card">
+      <div>Device ID (MAC)</div>
+      <span class="mac" id="mac">—</span>
+      <div class="msg" id="claim-state"></div>
+    </div>
+
+    <div class="card hidden" id="auth-card">
+      <h2 id="auth-title">Sign in</h2>
+      <label for="email">Email</label>
+      <input type="email" id="email" autocomplete="username">
+      <label for="password">Password</label>
+      <input type="password" id="password" autocomplete="current-password">
+      <button id="auth-btn">Sign in</button>
+      <button class="ghost" id="toggle-btn">Create a new account</button>
+      <div class="msg err" id="auth-err"></div>
+    </div>
+
+    <div class="card hidden" id="claim-card">
+      <h2>Claim this device</h2>
+      <p id="signed-in-as"></p>
+      <button id="claim-btn">Claim device</button>
+      <div class="msg" id="claim-result"></div>
+    </div>
+
+    <div class="card hidden" id="done-card">
+      <h2>Device claimed!</h2>
+      <p>The node will pick up its key when it connects and start syncing.</p>
+    </div>
+
+    <div id="dash" class="hidden"></div>
+  </main>
+
+  <script src="config.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <script>
+    firebase.initializeApp(FIREBASE_CONFIG);
+    const db = firebase.database();
+
+    const MAC_RE = /^[A-F0-9]{12}$/;
+    let deviceId = (location.pathname || "").replace(/^\//, "").split("/")[0];
+    if (!MAC_RE.test(deviceId)) deviceId = null;
+
+    const $ = id => document.getElementById(id);
+
+    // ---------- WMO weather mapping (mirrors firmware classifyCode) ----------
+    function wmoLabel(raw) {
+      const code = Number(raw);
+      if (!isFinite(code)) return "—";
+      if (code <= 10) return "Sunny";
+      if (code <= 20) return "Clear";
+      if (code <= 40) return "Slightly Cloudy";
+      if (code <= 60) return "Cloud";
+      if (code <= 80) return "Light Rain";
+      if (code <= 99) return "Rain";
+      return "—";
+    }
+
+    function fmtEpoch(ts) {
+      if (!ts || ts < 1000000) return "unknown";
+      return new Date(ts * 1000).toLocaleString();
+    }
+
+    // ---------- Dashboard ----------
+    function renderDeviceCard(mac, data) {
+      const nodes = data ? Object.values(data).sort((a, b) => (a.ts || 0) - (b.ts || 0)) : [];
+      const latest = nodes.length ? nodes[nodes.length - 1] : null;
+
+      let forecastNode = null, forecastTs = 0;
+      for (const n of nodes) {
+        if (n.forecast && Array.isArray(n.forecast) && (n.ts || 0) >= forecastTs) {
+          forecastNode = n;
+          forecastTs = n.ts;
+        }
+      }
+
+      const el = document.createElement("div");
+      el.className = "card";
+      el.innerHTML = `<div class="mac">${mac}</div>`;
+
+      const body = document.createElement("div");
+      if (!latest) {
+        body.className = "empty";
+        body.textContent = "No data yet — the node syncs once it connects to your WiFi.";
+      } else {
+        const t = typeof latest.t === "number" ? latest.t.toFixed(1) : "—";
+        const h = typeof latest.h === "number" ? Math.round(latest.h) : "—";
+        const p = typeof latest.p === "number" ? latest.p.toFixed(1) : "—";
+        const updated = document.createElement("div");
+        updated.className = "msg ok";
+        updated.style.minHeight = "0";
+        updated.textContent = "Updated " + fmtEpoch(latest.ts);
+        el.appendChild(updated);
+
+        body.innerHTML = `
+          <div class="row">
+            <div class="stat"><div class="v">${t}°C</div><div class="k">Temp</div></div>
+            <div class="stat"><div class="v">${h}%</div><div class="k">Humidity</div></div>
+            <div class="stat"><div class="v">${p} hPa</div><div class="k">Pressure</div></div>
+          </div>
+          ${sparkline(nodes)}
+          ${forecastHtml(forecastNode)}
+        `;
+      }
+      el.appendChild(body);
+      return el;
+    }
+
+    function sparkline(nodes) {
+      const pts = nodes.map(n => n.t).filter(v => typeof v === "number" && !isNaN(v));
+      if (pts.length < 2) return "";
+      const W = 680, H = 64, pad = 4;
+      let mn = Math.min(...pts), mx = Math.max(...pts);
+      if (mx - mn < 1) { mn -= 0.5; mx += 0.5; }
+      const x = i => pad + (W - 2 * pad) * (i / (pts.length - 1));
+      const y = v => H - pad - (H - 2 * pad) * ((v - mn) / (mx - mn));
+      const coords = pts.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+      return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        <polyline points="${coords}" fill="none" stroke="#60a5fa" stroke-width="2"/>
+        <circle cx="${x(pts.length - 1).toFixed(1)}" cy="${y(pts[pts.length - 1]).toFixed(1)}" r="3" fill="#60a5fa"/>
+      </svg>`;
+    }
+
+    function forecastHtml(node) {
+      if (!node) return "";
+      const codes = ["Now", "Day 1", "Day 2", "Day 3"];
+      const values = [node.weather_code, node.forecast[0], node.forecast[1], node.forecast[2]];
+      return `<div class="badges">
+        ${values.map((c, i) => `<span class="badge"><b>${codes[i]}</b>${wmoLabel(c)}</span>`).join("")}
+      </div>`;
+    }
+
+    async function loadDashboard(user) {
+      const dash = $("dash");
+      dash.innerHTML = "";
+      dash.classList.remove("hidden");
+      $("refresh-btn").classList.remove("hidden");
+
+      try {
+        const snap = await db.ref("users/" + user.uid + "/owned_devices").once("value");
+        const owned = snap.val() || {};
+        const macs = Object.keys(owned);
+        if (!macs.length) {
+          dash.innerHTML = '<div class="card"><h2>Your devices</h2><p class="empty">You have no claimed nodes yet. Scan a node\'s QR code to claim it.</p></div>';
+          return;
+        }
+        const title = document.createElement("div");
+        title.className = "card";
+        title.innerHTML = `<h2>Your devices (${macs.length})</h2>`;
+        dash.appendChild(title);
+        for (const mac of macs) {
+          let data = null;
+          try {
+            const s = await db.ref("devices/" + mac).once("value");
+            data = s.val();
+          } catch (e) { /* public read; tolerate */ }
+          dash.appendChild(renderDeviceCard(mac, data));
+        }
+      } catch (e) {
+        dash.innerHTML = `<div class="card"><p class="msg err">Failed to load devices: ${e.message}</p></div>`;
+      }
+    }
+
+    // ---------- Claim page logic (device link) ----------
+    const macEl = $("mac"), claimState = $("claim-state"),
+          authCard = $("auth-card"), claimCard = $("claim-card"),
+          doneCard = $("done-card"), deviceCard = $("device-card"), heroCard = $("hero-card");
+
+    if (!deviceId) {
+      macEl.textContent = "invalid link";
+      claimState.textContent = "No device ID in the URL. Open the link from the device's QR code.";
+      claimState.className = "msg err";
+    } else {
+      macEl.textContent = deviceId;
+    }
+
+    function refreshDeviceState(user) {
+      if (!deviceId) return;
+      db.ref("claimed_devices/" + deviceId).once("value")
+        .then(snap => {
+          const claimed = snap.exists();
+          claimState.textContent = claimed ? "This device is already claimed." : "This device is not claimed yet.";
+          claimState.className = "msg " + (claimed ? "ok" : "err");
+          if (user) {
+            doneCard.classList.toggle("hidden", !claimed);
+            claimCard.classList.toggle("hidden", claimed);
+          }
+        })
+        .catch(err => { claimState.textContent = "DB read failed: " + err.message; claimState.className = "msg err"; });
+    }
+
+    const emailInput = $("email"), passInput = $("password"), authBtn = $("auth-btn"),
+          authTitle = $("auth-title"), authErr = $("auth-err"), toggleBtn = $("toggle-btn");
+
+    let signupMode = false;
+    toggleBtn.addEventListener("click", () => {
+      signupMode = !signupMode;
+      authTitle.textContent = signupMode ? "Create account" : "Sign in";
+      toggleBtn.textContent = signupMode ? "I already have an account" : "Create a new account";
+      passInput.autocomplete = signupMode ? "new-password" : "current-password";
+      authErr.textContent = "";
+    });
+
+    authBtn.addEventListener("click", async () => {
+      const email = emailInput.value.trim(), pass = passInput.value;
+      authErr.textContent = "";
+      authBtn.disabled = true;
+      try {
+        if (signupMode) await firebase.auth().createUserWithEmailAndPassword(email, pass);
+        else await firebase.auth().signInWithEmailAndPassword(email, pass);
+      } catch (e) {
+        authErr.textContent = e.message;
+      } finally {
+        authBtn.disabled = false;
+      }
+    });
+
+    firebase.auth().onAuthStateChanged(user => {
+      $("signed-in-as").textContent = user ? "Signed in as " + user.email : "";
+      $("signout-btn").classList.toggle("hidden", !user);
+      authCard.classList.toggle("hidden", !!user);
+      deviceCard.classList.toggle("hidden", !deviceId);
+      heroCard.classList.toggle("hidden", !!deviceId || !!user);
+
+      if (user) {
+        $("subtitle").textContent = "Your weather node dashboard.";
+        loadDashboard(user);
+        refreshDeviceState(user);
+      } else {
+        $("dash").classList.add("hidden");
+        claimCard.classList.add("hidden");
+        doneCard.classList.add("hidden");
+        $("subtitle").textContent = "Your personal weather node.";
+      }
+    });
+
+    $("signout-btn").addEventListener("click", () => firebase.auth().signOut());
+
+    $("refresh-btn").addEventListener("click", () => {
+      const u = firebase.auth().currentUser;
+      if (u) loadDashboard(u);
+    });
+
+    $("claim-btn").addEventListener("click", async () => {
+      const user = firebase.auth().currentUser;
+      if (!user || !deviceId) return;
+      const btn = $("claim-btn"), res = $("claim-result");
+      btn.disabled = true;
+      res.className = "msg";
+      res.textContent = "Claiming...";
+      try {
+        const token = crypto.randomUUID().replace(/-/g, "").toUpperCase();
+        const now = Date.now();
+        await db.ref("claimed_devices/" + deviceId).set(token);
+        await db.ref("users/" + user.uid + "/owned_devices/" + deviceId).set({ token, claimed_at: now });
+        res.textContent = "Done! The device will claim itself when it connects.";
+        res.className = "msg ok";
+        refreshDeviceState(user);
+      } catch (e) {
+        res.textContent = "Failed: " + e.message;
+        res.className = "msg err";
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

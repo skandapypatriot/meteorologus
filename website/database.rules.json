@@ -1,0 +1,23 @@
+{
+  "rules": {
+    "claimed_devices": {
+      "$device_id": {
+        ".read": true,
+        ".write": "auth != null"
+      }
+    },
+    "devices": {
+      ".read": true,
+      "$device_id": {
+        ".read": true,
+        ".write": "root.child('claimed_devices').child($device_id).exists()"
+      }
+    },
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    }
+  }
+}
