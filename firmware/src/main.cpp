@@ -7,6 +7,8 @@
 #include <Adafruit_AHTX0.h>
 #include <U8g2lib.h>
 #include <WiFi.h>
+#include <WebServer.h>
+#include <DNSServer.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <time.h>
@@ -62,6 +64,8 @@
 #define WIFI_CONNECT_TIMEOUT 5000
 #define WIFI_SSID "Samsung Galaxy M47 5G"
 #define WIFI_PASS "Sahana27"
+#define WIFI_PORTAL_TIMEOUT 0
+#define WIFI_OFFLINE_LIMIT_SECONDS 864000UL // 10 days
 #define FIREBASE_BASE_URL "https://weather-monitor-f4248-default-rtdb.asia-southeast1.firebasedatabase.app"
 #define CLAIM_WEB_BASE "https://weather-monitor-f4248.web.app/"
 #define DEEP_SLEEP_DURATION_US 5400000000ULL  // 1hour
@@ -75,6 +79,14 @@ bool is_logo = false;
 // Debug control - set to false to disable deep sleep
 bool ENABLE_SLEEP = true;
 bool sleep_triggered = false;
+String wifi_ssid = WIFI_SSID;
+String wifi_password = WIFI_PASS;
+bool wifi_portal_active = false;
+bool wifi_portal_reconnect = false;
+WebServer wifi_portal_server(80);
+DNSServer wifi_portal_dns;
+unsigned long wifi_portal_reconnect_started = 0;
+unsigned long wifi_offline_seconds = 0;
 const unsigned long FIREBASE_SYNC_INTERVAL = 12000; // 12 seconds
 SemaphoreHandle_t fb_mutex = NULL;
 
@@ -310,6 +322,121 @@ void log_wifi_scan() {
   WiFi.scanDelete();
 }
 
+void load_wifi_credentials() {
+  Preferences prefs;
+  prefs.begin("wifi", true);
+  String stored_ssid = prefs.getString("ssid", "");
+  String stored_password = prefs.getString("password", "");
+  wifi_offline_seconds = prefs.getULong("offline_s", 0);
+  prefs.end();
+
+  if (stored_ssid.length() > 0) wifi_ssid = stored_ssid;
+  if (stored_password.length() > 0) wifi_password = stored_password;
+
+  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER) {
+    wifi_offline_seconds += (unsigned long)(DEEP_SLEEP_DURATION_US / 1000000ULL);
+    prefs.begin("wifi", false);
+    prefs.putULong("offline_s", wifi_offline_seconds);
+    prefs.end();
+  }
+}
+
+void save_wifi_credentials(const String &ssid, const String &password) {
+  Preferences prefs;
+  prefs.begin("wifi", false);
+  prefs.putString("ssid", ssid);
+  prefs.putString("password", password);
+  prefs.putULong("offline_s", 0);
+  prefs.end();
+  wifi_ssid = ssid;
+  wifi_password = password;
+  wifi_offline_seconds = 0;
+}
+
+void record_wifi_failure() {
+  wifi_offline_seconds += WIFI_CONNECT_TIMEOUT / 1000;
+  Preferences prefs;
+  prefs.begin("wifi", false);
+  prefs.putULong("offline_s", wifi_offline_seconds);
+  prefs.end();
+}
+
+bool wifi_portal_required() {
+  return !wifi_available && (device_key.length() == 0 ||
+                             wifi_offline_seconds >= WIFI_OFFLINE_LIMIT_SECONDS);
+}
+
+String wifi_portal_page() {
+  String page = R"HTML(<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Weather Monitor WiFi</title><style>body{font-family:system-ui;margin:2rem;max-width:28rem}input,button{box-sizing:border-box;width:100%;padding:.8rem;margin:.4rem 0 1rem;font-size:1rem}button{background:#1769aa;color:#fff;border:0;border-radius:4px}small{color:#555}</style></head><body><h2>Weather Monitor WiFi</h2><p>Enter the WiFi network for this device.</p><form method="POST" action="/save"><label>SSID</label><input name="ssid" required maxlength="32" value=")HTML";
+  page += wifi_ssid;
+  page += R"HTML("><label>Password</label><input name="password" type="password" maxlength="64" placeholder="Leave blank for an open network"><button type="submit">Save and connect</button></form><small>The device will keep this network until changed here.</small></body></html>)HTML";
+  return page;
+}
+
+void start_wifi_portal() {
+  if (wifi_portal_active) return;
+
+  String ap_name = String("WeatherMonitor-") + device_id.substring(6);
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(ap_name.c_str());
+  wifi_portal_dns.start(53, "*", WiFi.softAPIP());
+
+  wifi_portal_server.on("/", HTTP_GET, []() {
+    wifi_portal_server.send(200, "text/html", wifi_portal_page());
+  });
+  wifi_portal_server.on("/save", HTTP_POST, []() {
+    String ssid = wifi_portal_server.arg("ssid");
+    String password = wifi_portal_server.arg("password");
+    ssid.trim();
+    if (ssid.length() == 0) {
+      wifi_portal_server.send(400, "text/plain", "SSID is required");
+      return;
+    }
+    save_wifi_credentials(ssid, password);
+    wifi_portal_reconnect = true;
+    wifi_portal_reconnect_started = millis();
+    WiFi.disconnect();
+    WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
+    wifi_portal_server.send(200, "text/html", "<html><body><h2>Saved</h2><p>Trying to connect. This page will finish when WiFi is available.</p></body></html>");
+    LOGLN("[wifi] New credentials received from portal");
+  });
+  wifi_portal_server.onNotFound([]() {
+    wifi_portal_server.send(200, "text/html", wifi_portal_page());
+  });
+  wifi_portal_server.begin();
+  wifi_portal_active = true;
+  LOGLN("[wifi] Setup portal started");
+  LOGF("[wifi] Connect to AP '%s', then open http://%s\n", ap_name.c_str(), WiFi.softAPIP().toString().c_str());
+}
+
+void stop_wifi_portal() {
+  wifi_portal_server.stop();
+  wifi_portal_dns.stop();
+  WiFi.softAPdisconnect(true);
+  wifi_portal_active = false;
+  wifi_portal_reconnect = false;
+  LOGLN("[wifi] Setup portal stopped");
+}
+
+void handle_wifi_portal() {
+  wifi_portal_dns.processNextRequest();
+  wifi_portal_server.handleClient();
+
+  if (wifi_portal_reconnect && WiFi.status() == WL_CONNECTED) {
+    wifi_available = true;
+    wifi_offline_seconds = 0;
+    stop_wifi_portal();
+    sync_time();
+    LOGLN("[wifi] Connected with new credentials");
+    return;
+  }
+
+  if (wifi_portal_reconnect && millis() - wifi_portal_reconnect_started > 15000) {
+    wifi_portal_reconnect = false;
+    LOGLN("[wifi] New credentials failed; portal remains open");
+  }
+}
+
 void check_wifi_status(){
     if (WiFi.getMode() != WIFI_STA) {
       esp_bt_controller_disable();   // BT shares the 2.4GHz radio - keep it off
@@ -323,7 +450,7 @@ void check_wifi_status(){
     if (WiFi.status() != WL_CONNECTED) {  
       WiFi.disconnect();             // clean start before joining
       delay(100);
-      WiFi.begin(WIFI_SSID, WIFI_PASS);
+      WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
       unsigned long startAttempt = millis();
       while (WiFi.status() != WL_CONNECTED && (millis() - startAttempt) < WIFI_CONNECT_TIMEOUT) {
         delay(100);
@@ -333,7 +460,12 @@ void check_wifi_status(){
     wifi_available = (WiFi.status() == WL_CONNECTED);
 
     if (wifi_available) {
-      LOGLN("[wifi] Connected to " WIFI_SSID);
+      wifi_offline_seconds = 0;
+      Preferences prefs;
+      prefs.begin("wifi", false);
+      prefs.putULong("offline_s", 0);
+      prefs.end();
+      LOGF("[wifi] Connected to %s\n", wifi_ssid.c_str());
       int rssi = WiFi.RSSI();
       if (rssi >= -55) wifi_bars = 4;
       else if (rssi >= -65) wifi_bars = 3;
@@ -342,7 +474,9 @@ void check_wifi_status(){
       else wifi_bars = 0;
     } else {
       wifi_bars = 0;
-      LOGF("[wifi] Connect to '" WIFI_SSID "' FAILED - status=%d reason=%d (%s)\n",
+       record_wifi_failure();
+       LOGF("[wifi] Connect to '%s' FAILED - status=%d reason=%d (%s)\n",
+         wifi_ssid.c_str(),
            WiFi.status(), wifi_disconnect_reason, wifi_reason_str(wifi_disconnect_reason));
       log_wifi_scan();
     }
@@ -442,16 +576,13 @@ void read_sensors() {
   }
 
   if (pressure_sensor == PressureSensor::BMP180) {
+    temp = bmp.readTemperature();
     pressure = bmp.readPressure() / 100.0F;
-    if (humidity_sensor == HumiditySensor::NONE || humidity_sensor == HumiditySensor::DHT11) {
-      temp = bmp.readTemperature();
-    }
   } else if (pressure_sensor == PressureSensor::BMP280) {
+    temp = bmp280.readTemperature();
     pressure = bmp280.readPressure() / 100.0F;
-    if (humidity_sensor == HumiditySensor::NONE || humidity_sensor == HumiditySensor::DHT11) {
-      temp = bmp280.readTemperature();
-    }
   } else if (pressure_sensor == PressureSensor::BME280) {
+    temp = bme.readTemperature();
     pressure = bme.readPressure() / 100.0F;
   }
 
@@ -785,7 +916,8 @@ void draw_claim_instructions() {
     if (!wifi_available) {
       u8g2.drawStr(4, 38, "Not connected to");
       u8g2.drawStr(4, 45, "the internet.");
-      u8g2.drawStr(4, 52, "WiFi: " WIFI_SSID);
+      String wifi_line = String("WiFi: ") + wifi_ssid;
+      u8g2.drawStr(4, 52, wifi_line.c_str());
       u8g2.drawStr(4, 59, "Retrying every 30s");
     } else {
       u8g2.drawStr(4, 38, "Scan QR or open:");
@@ -924,15 +1056,17 @@ do {
   
   delay(1500); 
   // Initial read & sync process before UI starts cycling
+  device_id = get_device_id();
+  load_wifi_credentials();
+  device_key = get_stored_device_key();
+  device_claimed = (device_key.length() > 0);
+
   check_wifi_status();
   sync_time(); // NTP is the only time source; re-synced on every wakeup
 
   // Device identity: clean MAC, then check NVS for a stored claim token.
-  device_id = get_device_id();
   LOGF("[provision] Device ID (MAC): %s\n", device_id.c_str());
 
-  device_key = get_stored_device_key();
-  device_claimed = (device_key.length() > 0);
   if (device_claimed) {
     LOGLN("[provision] Stored claim key present, device is claimed.");
   } else {
@@ -941,6 +1075,7 @@ do {
     if (!device_claimed) LOGLN("[provision] Not claimed yet - showing QR code.");
   }
   last_provision_check = millis();
+  if (wifi_portal_required()) start_wifi_portal();
   
   // Quick initial sensor read (skipped while unpaired - provisioning mode)
   if (device_claimed) read_sensors();
@@ -967,6 +1102,11 @@ do {
 
 void loop() {
   unsigned long now = millis();
+
+  if (wifi_portal_active) {
+    handle_wifi_portal();
+    return;
+  }
 
   // 1. Read Sensors Periodically (skipped entirely while unpaired)
   if (now - lastsensorupdate >= SENSOR_UPDATE){
@@ -1050,6 +1190,16 @@ void loop() {
           boot_done = millis();      // restart the 20s awake window before sleeping
         }
       }
+      if (wifi_portal_required()) start_wifi_portal();
+  }
+
+  // Paired devices also retry periodically so a prolonged outage can enter
+  // setup mode without requiring a button press or reboot.
+  if (device_claimed && !wifi_available &&
+      (now - last_provision_check >= PROVISION_RECHECK_INTERVAL)) {
+      last_provision_check = now;
+      check_wifi_status();
+      if (wifi_portal_required()) start_wifi_portal();
   }
 
   // 6. Deep Sleep Trigger (Happens after staying awake for AWAKE_DURATION)

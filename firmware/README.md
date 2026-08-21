@@ -6,8 +6,11 @@ The Meteorologus firmware turns an ESP32-C3 into a self-contained weather node: 
 
 ## Table of Contents
 
-- [Hardware](#hardware)
-- [Wiring & Pinout](#wiring--pinout)
+- [Building the Project (Hardware)](#building-the-project-hardware)
+  - [Parts List (BOM)](#parts-list-bom)
+  - [Wiring & Pinout](#wiring--pinout)
+  - [Peripheral Power Switch (BC547)](#peripheral-power-switch-bc547)
+  - [Assembly Order](#assembly-order)
 - [Setup](#setup)
 - [Build, Flash & Monitor](#build-flash--monitor)
 - [Build Flags](#build-flags)
@@ -15,6 +18,7 @@ The Meteorologus firmware turns an ESP32-C3 into a self-contained weather node: 
   - [Boot Sequence](#boot-sequence)
   - [OLED Screens](#oled-screens)
   - [Provisioning / Claim Flow](#provisioning--claim-flow)
+  - [Wi-Fi Setup Portal](#wi-fi-setup-portal)
   - [Deep Sleep](#deep-sleep)
 - [On-Device ML Model](#on-device-ml-model)
 - [Cloud Sync Details](#cloud-sync-details)
@@ -22,7 +26,11 @@ The Meteorologus firmware turns an ESP32-C3 into a self-contained weather node: 
 
 ---
 
-## Hardware
+## Building the Project (Hardware)
+
+Everything physical lives in this section: the parts you need, how they connect, the transistor power switch that makes the battery budget work, and the order to assemble them in. For the prototyping progression (breadboard → perfboard → soldered builds → PCB), see the [root README](../README.md#how-to-build-it).
+
+### Parts List (BOM)
 
 | Component | Role | Notes |
 | :--- | :--- | :--- |
@@ -30,11 +38,15 @@ The Meteorologus firmware turns an ESP32-C3 into a self-contained weather node: 
 | DHT11 *(or AHT20 / BME280)* | Temperature + humidity | Auto-detected at boot, priority: BME280 > AHT20 > DHT11 |
 | BMP180 *(or BMP280 / BME280)* | Barometric pressure | Auto-detected, addresses 0x76/0x77 scanned |
 | SSD1306 0.96" OLED 128×64 | Display (U8g2, hardware I²C) | Address 0x3C |
-| DS3231 RTC *(optional)* | Timekeeping through sleep | Address 0x68; falls back to NTP if absent |
+| DS3231 RTC *(optional)* | Timekeeping through sleep | Address 0x68; **always powered** — never behind the switch |
+| **BC547** (NPN, TO-92) | Peripheral power switch | Cuts OLED + sensors completely during sleep |
+| 1 kΩ resistor | Base resistor for BC547 | GPIO 10 → base |
+| 10 kΩ resistor | Base pull-down | Keeps switch OFF during boot/reset |
+| 4.7 kΩ resistor | DHT11 data pull-up | Only if using a DHT11 |
 | 18650 + TP4056 (Type-C) | Power | Protection circuit recommended |
 | Flash/wake button | Wake from deep sleep | GPIO 3, active-low |
 
-## Wiring & Pinout
+### Wiring & Pinout
 
 | Signal | GPIO | Connected to |
 | :--- | :--- | :--- |
@@ -42,9 +54,61 @@ The Meteorologus firmware turns an ESP32-C3 into a self-contained weather node: 
 | I²C SDA | **8** | OLED, RTC, pressure sensor, AHT20 |
 | I²C SCL | **9** | OLED, RTC, pressure sensor, AHT20 |
 | Wake button | **3** | Button to GND (GPIO-low wakeup) |
-| Peripheral power rail | **10** | High-side switch for sensors/OLED; driven LOW before sleep |
+| **BC547 base** | **21** | Via 1 kΩ resistor (see below) |
 
 I²C addresses probed at boot: `0x68` (DS3231), `0x77` (BMP180/BMP280/BME280), `0x3C` (SSD1306), plus `0x38` (AHT20) and `0x76` (BMP280/BME280 alt).
+
+### Peripheral Power Switch (BC547)
+
+Deep sleep alone (~25–50 µA) is wasted if the OLED and sensors keep drawing milliamps forever. A BC547 NPN transistor acts as a **low-side switch**: the firmware drives it ON while awake and OFF right before sleeping, so the peripherals are disconnected from GND entirely — true zero current, not just "sleeping" peripherals.
+
+```
+   GPIO 10 ──[ 1 kΩ ]──┬──► Base          BC547  (flat side facing you:
+                       │                          C  B  E)
+                    [10 kΩ]                     │
+                       │                        │
+                      GND                       │
+
+   ┌──────────────────────────┐
+   │  OLED · DHT11/AHT20/BME  │  VCC ──► 3V3 (always on)
+   │  BMP180/BMP280           │
+   │  GND ──────► Collector   │
+   └──────────────────────────┘
+                              Emitter ──► GND
+```
+
+**How to wire it**
+
+1. **Emitter → GND** (battery negative).
+2. **Collector → GND pin of the OLED and all *switched* sensors** (their VCC pins stay on 3V3).
+3. **Base → GPIO 10 through the 1 kΩ resistor.**
+4. **10 kΩ pull-down from base to GND** — ESP32 GPIOs float during boot/reset; this holds the switch OFF so peripherals never get phantom power.
+5. **DS3231 RTC stays OUT of the switched group** — wire its GND directly to battery GND so timekeeping survives sleep.
+
+**Logic (matches the firmware exactly)**
+
+| GPIO 10 | BC547 | Peripherals |
+| :--- | :--- | :--- |
+| HIGH | ON | Powered — normal operation |
+| LOW *(before deep sleep)* | OFF | Fully disconnected — 0 mA |
+
+*Pinout reminder:* holding the BC547 flat side toward you, the legs are **Collector – Base – Emitter** left to right.
+
+**Design notes**
+
+- Load is well within limits: OLED (~15 mA) + sensors (< 5 mA) ≪ BC547's ~100 mA max.
+- The ~0.2 V collector-emitter saturation drop is negligible for these devices.
+- Keep I²C pull-ups at 10 kΩ rather than 4.7 kΩ where possible — when the switched group is off, pull-ups to 3V3 can back-feed a few µA through the unpowered chips' protection diodes. Higher resistance keeps that leakage negligible.
+
+### Assembly Order
+
+1. **Breadboard everything first** — MCU, sensors, OLED, button — and verify detection in the serial log (no transistor yet).
+2. Add the TP4056 + 18650 supply and confirm the node runs on battery.
+3. Wire the BC547 stage (base resistor, pull-down, switched GND rail) and confirm the OLED blanks out the instant the log prints `[sleep] Entering Deep Sleep`.
+4. Move to perfboard following the layout that worked, sockets/headers for the MCU first, then the switched-GND star to the transistor.
+5. Enclose, label, done — pairing itself needs no computer (QR code).
+
+---
 
 ## Setup
 
@@ -56,17 +120,7 @@ I²C addresses probed at boot: `0x68` (DS3231), `0x77` (BMP180/BMP280/BME280), `
 #define WIFI_PASS "YourWiFiPassword"
 ```
 
-> ⚠️ Don't commit real credentials — prefer build flags or a git-ignored header.
-
-### WiFi recovery hotspot
-
-The device stores the working SSID and password in NVS. If WiFi cannot be
-found while the device has no Firebase claim key, it starts a setup hotspot
-named `WeatherMonitor-<device-id>`. It also starts the hotspot after 10 days
-without WiFi, even for a previously claimed device. Connect to that hotspot
-and open `http://192.168.4.1`, or use the captive-portal notification, to enter
-new credentials. The device tests the new network and keeps the portal open
-until it connects successfully.
+> ⚠️ Don't commit real credentials — prefer build flags or a git-ignored header. These values are only **fallback defaults**: credentials entered through the [Wi-Fi Setup Portal](#wi-fi-setup-portal) are stored on-device and take priority.
 
 3. If you use a different Firebase project, also update:
 
@@ -81,7 +135,7 @@ until it connects successfully.
 pio run                    # compile
 pio run -t upload          # flash over USB
 pio device monitor         # serial console @ 115200
-pio run -t erase           # wipe NVS (forces re-pairing)
+pio run -t erase           # wipe NVS (forces re-pairing + clears portal credentials)
 ```
 
 ## Build Flags
@@ -103,6 +157,7 @@ Timing constants live in `src/main.cpp`:
 | `FIREBASE_SYNC_INTERVAL` | 12 s | Cloud sync cadence while awake |
 | `PROVISION_RECHECK_INTERVAL` | 30 s | Claim poll rate while unpaired |
 | `SCREEN_DURATION` | 5 s | Per-screen display time |
+| `WIFI_OFFLINE_LIMIT_SECONDS` | 10 days | Cumulative offline time before a claimed node opens the setup portal |
 
 ## Device Behaviour
 
@@ -112,11 +167,11 @@ Timing constants live in `src/main.cpp`:
 Cold boot / timer wake / button wake
   → logo splash
   → I²C scan + sensor auto-detection
+  → load Wi-Fi credentials (NVS "wifi") + claim key (NVS "auth")
   → Wi-Fi connect (5 s timeout) → NTP sync (IST, +5:30)
-  → load claim key from NVS ("auth" namespace)
-      ├─ key found  → claimed mode
-      └─ no key     → poll cloud once → else pairing mode (QR)
-  → local KNN prediction → first Firebase sync → screens start
+      ├─ connected            → normal operation
+      └─ no network AND (unclaimed OR offline ≥ 10 days) → Wi-Fi Setup Portal
+  → claim check → local KNN prediction → first Firebase sync → screens start
 ```
 
 ### OLED Screens
@@ -153,9 +208,49 @@ sequenceDiagram
 - Every cloud write is rejected by security rules unless the device is listed in `/claimed_devices/<MAC>`.
 - If Firebase answers `401/403`, the firmware clears the stored key and returns to pairing mode automatically.
 
+### Wi-Fi Setup Portal
+
+Instead of failing silently when it can't reach a network, the node hosts its own **captive portal** so Wi-Fi can be configured from any phone — no USB, no recompile.
+
+```mermaid
+flowchart TD
+    A["Wake / boot"] --> B{"Wi-Fi connected?"}
+    B -->|"yes"| C["Normal operation<br/>(offline counter reset)"]
+    B -->|"no"| D{"Unclaimed OR offline<br/>for ≥ 10 days?"}
+    D -->|"no"| E["Retry next cycle<br/>(offline counter accumulates)"]
+    D -->|"yes"| F["Start captive portal<br/>AP: WeatherMonitor-XXXXXX"]
+    F --> G["User joins and submits<br/>SSID + password"]
+    G --> H{"Connects within 15 s?"}
+    H -->|"yes"| I["Credentials saved to NVS<br/>portal closes · NTP sync"]
+    H -->|"no"| J["Portal stays open<br/>try again"]
+    J --> F
+```
+
+**When it activates**
+
+| Trigger | Condition |
+| :--- | :--- |
+| Unclaimed node | No claim key stored and no Wi-Fi connection |
+| Prolonged outage | Claimed node has been offline cumulatively ≥ `WIFI_OFFLINE_LIMIT_SECONDS` (10 days) — tracked across deep-sleep cycles in NVS |
+
+**How to use it**
+
+1. On your phone, join the open network **`WeatherMonitor-<last 6 of MAC>`**.
+2. The config page pops up automatically (captive portal); otherwise open **`http://192.168.4.1`**.
+3. Enter the SSID and password (leave the password blank for open networks) and submit.
+4. The device saves the credentials to NVS and tests the connection for up to 15 s:
+   - **Success** → portal closes, NTP re-syncs, normal operation resumes.
+   - **Failure** → the portal stays open so you can correct the details.
+
+**Notes**
+
+- Stored credentials override the compile-time `WIFI_SSID`/`WIFI_PASS` fallbacks and persist until changed via the portal or erased with `pio run -t erase`.
+- While the portal is active the node stays awake and pauses sensor syncing/deep sleep — it resumes once connected.
+- A claimed device checks periodically between syncs, so even a deployed node can enter setup mode after a long outage without a button press or reboot.
+
 ### Deep Sleep
 
-After the awake window the node cuts peripheral power (GPIO 10), arms GPIO-low wakeup on the button plus a 1-hour timer wake, and enters deep sleep. On wake the device fully resets and repeats the boot sequence. Set `ENABLE_SLEEP = false` in `main.cpp` while debugging.
+After the awake window the node turns the peripheral power switch off (GPIO 10 → BC547 cuts OLED + sensors completely), arms GPIO-low wakeup on the button plus a 1-hour timer wake, and enters deep sleep. On wake the device fully resets and repeats the boot sequence. Set `ENABLE_SLEEP = false` in `main.cpp` while debugging.
 
 ## On-Device ML Model
 
@@ -176,9 +271,14 @@ Serial logs print exact disconnect reasons. Common ones:
 
 | Log | Meaning | Fix |
 | :--- | :--- | :--- |
-| `202 AUTH_FAIL` / `15 4WAY_HANDSHAKE_TIMEOUT` | Wrong password | Check `WIFI_PASS` |
-| `201 NO_AP_FOUND` | SSID not visible/out of range | Check `WIFI_SSID`, move closer; scan list is printed |
+| `202 AUTH_FAIL` / `15 4WAY_HANDSHAKE_TIMEOUT` | Wrong password | Re-enter credentials via the setup portal |
+| `201 NO_AP_FOUND` | SSID not visible/out of range | Check SSID, move closer; scan list is printed |
+| Portal never appears | Not unclaimed and offline < 10 days | Erase NVS (`pio run -t erase`) to force pairing mode |
+| Can't find `WeatherMonitor-…` hotspot | Portal not active | Check serial log for `[wifi] Setup portal started` |
+| Portal page doesn't pop up | Captive portal blocked by phone | Open `http://192.168.4.1` manually |
+| New credentials rejected repeatedly | Wrong password/out of range | Portal stays open — retry; watch serial log for reason codes |
 | `RTC Error` on screen 1 | DS3231 missing or lost power | Expected without RTC; NTP takes over |
 | Stuck on pairing screen | Never claimed | Complete the QR flow; check `CLAIM_WEB_BASE` matches your deployed site |
 | `401/403` on POST | Claim revoked or rules changed | Device auto-clears key → re-pair |
 | Forecast stuck on `Local AI` | Server not running / no fresh data | See [inferenceserver README](../inferenceserver/README.md) |
+| OLED/sensors dead permanently | BC547 wired backwards or base resistor missing | Verify C-B-E orientation and the GPIO 10 → 1 kΩ → base path |

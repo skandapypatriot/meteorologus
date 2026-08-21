@@ -115,7 +115,7 @@ flowchart LR
 **Goal:** a semi-permanent build that survives being picked up and moved.
 
 - Transfer the proven layout onto perfboard (protoboard); sockets/headers let you still remove the MCU.
-- Point-to-point solder the rails: 3V3, GND, I²C bus and the peripheral power rail (GPIO 10 controls sensor/OLED power).
+- Point-to-point solder the rails: 3V3, GND, I²C bus and the switched peripheral rail (a BC547 on GPIO 10 cuts OLED + sensor power completely during sleep).
 - Add the power section: 18650 holder → TP4056 (Type-C, with protection) → 3V3 regulator, plus a switch.
 - Keep the wake button (GPIO 3) and leave one spare header row for future add-ons.
 

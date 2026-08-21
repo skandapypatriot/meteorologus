@@ -1,0 +1,19 @@
+# Firmware build artifacts
+firmware/.pio/
+firmware/.pio/**
+
+# Web & Firebase caches
+website/.firebase/
+.firebase/
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+
+# Node dependencies & dist
+**/node_modules/
+**/dist/
+
+# IDE files
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
