@@ -17,7 +17,7 @@ on:
         description: 'Create Draft Release'
         type: boolean
         required: false
-        default: false
+        default: true
       prerelease:
         description: 'Create Pre-Release'
         type: boolean
@@ -204,10 +204,10 @@ jobs:
           retention-days: 7
 
   # ================================================================
-  # 5. Automatic GitHub Release
+  # 5. GitHub Release Creation (Attaches All Artifacts Directly)
   # ================================================================
   release:
-    name: Create Automatic Release
+    name: Create GitHub Release
     needs: [build-firmware, build-flutter-web, build-flutter-android, build-flutter-windows]
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -232,24 +232,24 @@ jobs:
             TAG="v1.0.0-build-${{ github.run_number }}"
           fi
           echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "Resolved release tag: $TAG"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.resolve_tag.outputs.tag }}
           name: Meteorologus Release ${{ steps.resolve_tag.outputs.tag }}
-          draft: ${{ github.event.inputs.draft || false }}
+          draft: ${{ github.event.inputs.draft || true }}
           prerelease: ${{ github.event.inputs.prerelease || false }}
-          generate_release_notes: true
+          generate_release_notes: false
+          body: ""
           files: |
-            release_assets/firmware.bin
-            release_assets/bootloader.bin
-            release_assets/partitions.bin
-            release_assets/meteorologus-firmware-esp32c3.zip
-            release_assets/meteorologus-web.zip
-            release_assets/meteorologus-android.apk
-            release_assets/meteorologus-windows-x64.zip
-            release_assets/meteorologus-windows-setup.exe
+            release_assets/**/bootloader.bin
+            release_assets/**/firmware.bin
+            release_assets/**/meteorologus-android.apk
+            release_assets/**/meteorologus-firmware-esp32c3.zip
+            release_assets/**/meteorologus-web.zip
+            release_assets/**/meteorologus-windows-setup.exe
+            release_assets/**/meteorologus-windows-x64.zip
+            release_assets/**/partitions.bin
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
