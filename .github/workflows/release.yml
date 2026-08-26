@@ -1,0 +1,255 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag Name (e.g. v1.0.0)'
+        required: false
+        default: ''
+      draft:
+        description: 'Create Draft Release'
+        type: boolean
+        required: false
+        default: false
+      prerelease:
+        description: 'Create Pre-Release'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  # ================================================================
+  # 1. PlatformIO Firmware Build
+  # ================================================================
+  build-firmware:
+    name: Build PlatformIO Firmware
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade platformio
+
+      - name: Compile Firmware
+        working-directory: firmware
+        run: |
+          pio run
+
+      - name: Package Firmware Binaries
+        run: |
+          mkdir -p firmware_bins
+          cp firmware/.pio/build/esp32-c3-devkitm-1/firmware.bin firmware_bins/firmware.bin
+          cp firmware/.pio/build/esp32-c3-devkitm-1/bootloader.bin firmware_bins/bootloader.bin
+          cp firmware/.pio/build/esp32-c3-devkitm-1/partitions.bin firmware_bins/partitions.bin
+          cd firmware_bins && zip -r ../meteorologus-firmware-esp32c3.zip *
+
+      - name: Upload Firmware Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-artifacts
+          path: |
+            firmware_bins/firmware.bin
+            firmware_bins/bootloader.bin
+            firmware_bins/partitions.bin
+            meteorologus-firmware-esp32c3.zip
+          retention-days: 7
+
+  # ================================================================
+  # 2. Flutter Web Build (Zipped)
+  # ================================================================
+  build-flutter-web:
+    name: Build Flutter Web
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        working-directory: android_app
+        run: flutter pub get
+
+      - name: Build Web Application
+        working-directory: android_app
+        run: flutter build web --release
+
+      - name: Package Web Build as Zip
+        run: |
+          cd android_app/build/web
+          zip -r ../../../meteorologus-web.zip .
+
+      - name: Upload Web Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-web-artifact
+          path: meteorologus-web.zip
+          retention-days: 7
+
+  # ================================================================
+  # 3. Flutter Android Build (APK)
+  # ================================================================
+  build-flutter-android:
+    name: Build Flutter Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        working-directory: android_app
+        run: flutter pub get
+
+      - name: Build Android APK
+        working-directory: android_app
+        run: flutter build apk --release
+
+      - name: Rename APK
+        run: |
+          cp android_app/build/app/outputs/flutter-apk/app-release.apk meteorologus-android.apk
+
+      - name: Upload Android Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-android-artifact
+          path: meteorologus-android.apk
+          retention-days: 7
+
+  # ================================================================
+  # 4. Flutter Windows Build (Desktop & Inno Setup Installer)
+  # ================================================================
+  build-flutter-windows:
+    name: Build Flutter Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        working-directory: android_app
+        run: flutter pub get
+
+      - name: Build Windows Application
+        working-directory: android_app
+        run: flutter build windows --release
+
+      - name: Package Windows Portable Zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "android_app\build\windows\x64\runner\Release\*" -DestinationPath "meteorologus-windows-x64.zip" -Force
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+
+      - name: Build Windows Installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $isccPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $isccPath)) {
+            $isccPath = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
+          }
+          & $isccPath "android_app\windows\installer.iss"
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-windows-artifact
+          path: |
+            meteorologus-windows-x64.zip
+            android_app/build/windows_installer/meteorologus-windows-setup.exe
+          retention-days: 7
+
+  # ================================================================
+  # 5. Automatic GitHub Release
+  # ================================================================
+  release:
+    name: Create Automatic Release
+    needs: [build-firmware, build-flutter-web, build-flutter-android, build-flutter-windows]
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release_assets
+          merge-multiple: true
+
+      - name: Resolve Release Tag
+        id: resolve_tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="v1.0.0-build-${{ github.run_number }}"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Resolved release tag: $TAG"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.resolve_tag.outputs.tag }}
+          name: Meteorologus Release ${{ steps.resolve_tag.outputs.tag }}
+          draft: ${{ github.event.inputs.draft || false }}
+          prerelease: ${{ github.event.inputs.prerelease || false }}
+          generate_release_notes: true
+          files: |
+            release_assets/firmware.bin
+            release_assets/bootloader.bin
+            release_assets/partitions.bin
+            release_assets/meteorologus-firmware-esp32c3.zip
+            release_assets/meteorologus-web.zip
+            release_assets/meteorologus-android.apk
+            release_assets/meteorologus-windows-x64.zip
+            release_assets/meteorologus-windows-setup.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

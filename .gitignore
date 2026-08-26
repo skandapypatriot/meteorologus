@@ -17,3 +17,6 @@ ui-debug.log*
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json
+
+# Local Release Binaries
+release_binaries/

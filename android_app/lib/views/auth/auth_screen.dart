@@ -89,8 +89,8 @@ class _AuthScreenState extends State<AuthScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     // Hero Icon & Title
-                    const Text('🌤️', style: TextStyle(fontSize: 48)),
-                    const SizedBox(height: 8),
+                    Image.asset('assets/logo.png', width: 64, height: 64),
+                    const SizedBox(height: 12),
                     Text(
                       'Meteorologus',
                       style: TextStyle(

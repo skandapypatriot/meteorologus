@@ -83,6 +83,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         Expanded(
                           child: Row(
                             children: [
+                              Image.asset('assets/logo.png', width: 22, height: 22),
+                              const SizedBox(width: 8),
                               Text(
                                 'Meteorologus',
                                 style: TextStyle(
