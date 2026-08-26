@@ -1,103 +1,285 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Meteorologus — Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#1e1b4b">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Meteorologus</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
-    :root { color-scheme: light dark; }
-    * { box-sizing: border-box; }
+    :root {
+      color-scheme: light dark;
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --rw: min(100cqi, 650px);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html { scroll-behavior: smooth; }
     body {
-      margin: 0;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      background: #0f172a; color: #e2e8f0;
-      display: flex; justify-content: center; padding: 2rem 1rem;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      display: flex; justify-content: center;
+      padding: clamp(.6rem, 2.5cqi, 1.5rem) clamp(.5rem, 2.5cqi, 1rem) calc(clamp(.6rem, 2.5cqi, 1.5rem) + var(--safe-bottom));
+      min-height: 100dvh;
+      transition: background .8s ease, color .6s;
+      -webkit-font-smoothing: antialiased;
+      overscroll-behavior: none;
     }
-    main { width: 100%; max-width: 720px; }
-    h1 { font-size: 1.6rem; margin: 0 0 .25rem; display: flex; align-items: center; justify-content: space-between; }
-    h2 { font-size: 1.15rem; margin: 0 0 .5rem; }
-    p.sub { color: #94a3b8; margin-top: 0; }
+    main {
+      width: 100%; max-width: min(92vw, 650px);
+      position: relative; z-index: 1;
+      container-type: inline-size;
+    }
+
+    /* --- header --- */
+    .header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: clamp(.2rem, 1cqi, .4rem) 0; margin-bottom: clamp(.05rem, .5cqi, .1rem);
+    }
+    .header h1 { font-size: clamp(1rem, 4cqi, 1.35rem); font-weight: 800; letter-spacing: -.02em; }
+    .greeting { font-size: clamp(.65rem, 2.2cqi, .82rem); opacity: .55; margin-bottom: clamp(.4rem, 2cqi, .8rem); font-weight: 500; }
+    .header-btns { display: flex; gap: clamp(.2rem, 1cqi, .35rem); }
+    .header-btns button {
+      background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.2);
+      color: inherit; padding: clamp(.2rem, 1cqi, .35rem) clamp(.4rem, 1.8cqi, .7rem);
+      border-radius: 20px; font-size: clamp(.58rem, 1.8cqi, .72rem);
+      font-weight: 600; cursor: pointer; transition: all .15s; font-family: inherit;
+    }
+    .header-btns button:active { transform: scale(.95); background: rgba(255,255,255,.25); }
+
+    /* --- card base --- */
     .card {
-      background: #1e293b; border: 1px solid #334155; border-radius: 12px;
-      padding: 1.25rem; margin-top: 1.25rem;
+      background: rgba(0,0,0,.22); backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: clamp(12px, 4cqi, 20px);
+      padding: clamp(.8rem, 3.5cqi, 1.6rem) clamp(.7rem, 3cqi, 1.3rem);
+      margin-bottom: clamp(.35rem, 1.5cqi, .7rem);
+      box-shadow: 0 8px 32px rgba(0,0,0,.12);
+      animation: fadeUp .4s ease both;
+      overflow: hidden;
     }
-    .mac {
-      font-family: ui-monospace, monospace; letter-spacing: 2px;
-      background: #0f172a; border: 1px solid #334155; border-radius: 8px;
-      padding: .5rem .75rem; display: inline-block; margin: 0 0 .5rem;
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
     }
-    label { display: block; font-size: .85rem; color: #94a3b8; margin: .75rem 0 .25rem; }
-    input {
-      width: 100%; padding: .6rem .75rem; border-radius: 8px;
-      border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 1rem;
+
+    /* --- auth card --- */
+    .auth-card label {
+      display: block; font-size: clamp(.58rem, 1.8cqi, .72rem); font-weight: 600; opacity: .5;
+      margin: clamp(.5rem, 2cqi, .75rem) 0 clamp(.12rem, .5cqi, .2rem);
+      text-transform: uppercase; letter-spacing: .5px;
     }
-    button {
-      width: 100%; margin-top: 1rem; padding: .7rem; border: 0; border-radius: 8px;
-      background: #3b82f6; color: #fff; font-size: 1rem; font-weight: 600; cursor: pointer;
+    .auth-card input {
+      width: 100%; padding: clamp(.55rem, 2cqi, .75rem) clamp(.6rem, 2.2cqi, .9rem);
+      border-radius: clamp(8px, 2.5cqi, 12px);
+      border: 1px solid rgba(255,255,255,.15);
+      background: rgba(0,0,0,.2); color: inherit;
+      font-size: clamp(.82rem, 2.5cqi, .95rem);
+      font-family: inherit; font-weight: 500;
+      transition: border-color .2s, box-shadow .2s; -webkit-appearance: none;
     }
-    button:disabled { opacity: .5; cursor: not-allowed; }
-    button.ghost { background: transparent; border: 1px solid #475569; color: #cbd5e1; }
-    button.inline { width: auto; padding: .4rem .8rem; margin-top: 0; font-size: .85rem; }
-    .msg { margin-top: .75rem; font-size: .9rem; min-height: 1.1em; }
+    .auth-card input:focus {
+      outline: none; border-color: rgba(255,255,255,.3);
+      box-shadow: 0 0 0 3px rgba(255,255,255,.06);
+    }
+    .auth-card button {
+      width: 100%; margin-top: clamp(.6rem, 2cqi, .9rem);
+      padding: clamp(.55rem, 2cqi, .8rem); border: 0;
+      border-radius: clamp(8px, 2.5cqi, 12px);
+      background: linear-gradient(135deg, #3b82f6, #6366f1);
+      color: #fff;       font-size: clamp(.82rem, 2.5cqi, .95rem);
+      font-weight: 700; cursor: pointer; font-family: inherit;
+      transition: transform .15s, box-shadow .2s;
+      box-shadow: 0 4px 16px rgba(59,130,246,.3);
+    }
+    .auth-card button:active { transform: scale(.97); }
+    .auth-card button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    .auth-card .ghost {
+      background: transparent; border: 1px solid rgba(255,255,255,.2);
+      box-shadow: none; margin-top: clamp(.3rem, 1.2cqi, .5rem);
+    }
+    .auth-card .ghost:active { background: rgba(255,255,255,.06); }
+    .link-btn {
+      background: none; border: 0; color: inherit; font-family: inherit;
+      font-size: clamp(.6rem, 1.8cqi, .75rem); font-weight: 600; opacity: .45;
+      cursor: pointer; padding: .25rem .4rem; border-radius: 8px;
+    }
+    .link-btn:active { opacity: .7; }
+    .auth-card .err {
+      color: #fb7185; font-size: clamp(.65rem, 2cqi, .8rem); font-weight: 500;
+      margin-top: clamp(.4rem, 1.5cqi, .6rem); min-height: 1.1em;
+    }
+    .auth-card .title {
+      font-size: clamp(1rem, 3.5cqi, 1.3rem); font-weight: 800;
+      margin-bottom: .1rem; letter-spacing: -.02em;
+    }
+
+    /* --- swipe container --- */
+    .swipe-wrap {
+      overflow-x: auto; scroll-snap-type: x mandatory;
+      display: flex; -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    .swipe-wrap::-webkit-scrollbar { display: none; }
+    .slide {
+      min-width: 100%; scroll-snap-align: start;
+      padding: 0 clamp(.15rem, 1cqi, .3rem); flex-shrink: 0;
+    }
+    .slide .card { margin-bottom: 0; }
+
+    /* --- pagination dots --- */
+    .dots { display: flex; justify-content: center; gap: clamp(.25rem, 1cqi, .4rem); margin: clamp(.35rem, 1.5cqi, .6rem) 0 .15rem; }
+    .dot {
+      width: clamp(4px, 1.5cqi, 6px); height: clamp(4px, 1.5cqi, 6px);
+      border-radius: 50%; opacity: .3;
+      background: currentColor; transition: all .3s ease;
+    }
+    .dot.active { opacity: .8; width: clamp(12px, 4cqi, 18px); border-radius: 3px; }
+
+    /* --- slide 1: current --- */
+    .current-emoji {
+      font-size: clamp(2.4rem, 9cqi, 3.8rem); text-align: center; line-height: 1;
+      margin-bottom: clamp(.02rem, .2cqi, .05rem);
+    }
+    .current-state {
+      text-align: center; font-size: clamp(.82rem, 2.8cqi, 1.1rem); font-weight: 700;
+      margin-bottom: 0; letter-spacing: -.01em;
+    }
+    .current-time {
+      text-align: center; font-size: clamp(.55rem, 1.8cqi, .7rem); font-weight: 500;
+      opacity: .4; margin-bottom: clamp(.35rem, 1.8cqi, .7rem);
+    }
+    .big-temp {
+      text-align: center; font-size: clamp(2.4rem, 9cqi, 3.8rem); font-weight: 800;
+      line-height: 1; margin-bottom: clamp(.3rem, 1.5cqi, .6rem); letter-spacing: -.04em;
+    }
+    .big-temp span { font-size: clamp(1rem, 4cqi, 1.5rem); font-weight: 500; letter-spacing: 0; }
+
+    .readings { display: flex; gap: clamp(.25rem, 1.2cqi, .45rem); }
+    .reading {
+      flex: 1; min-width: 0; text-align: center;
+      padding: clamp(.45rem, 1.8cqi, .7rem) clamp(.2rem, 1cqi, .35rem);
+      background: rgba(0,0,0,.15); border-radius: clamp(8px, 2.5cqi, 14px);
+      border: 1px solid rgba(255,255,255,.05); overflow: hidden;
+    }
+    .reading .val { font-size: clamp(.9rem, 3cqi, 1.2rem); font-weight: 800; letter-spacing: -.02em; }
+    .reading .lbl {
+      font-size: clamp(.45rem, 1.5cqi, .58rem); text-transform: uppercase;
+      letter-spacing: .4px; font-weight: 600; opacity: .45;
+      margin-top: clamp(.05rem, .3cqi, .12rem);
+    }
+
+    /* --- slide 2: forecast --- */
+    .forecast-title {
+      font-size: clamp(.82rem, 2.8cqi, 1.05rem); font-weight: 700;
+      text-align: center; margin-bottom: clamp(.4rem, 1.8cqi, .7rem);
+      letter-spacing: -.01em;
+    }
+    .forecast-grid { display: flex; gap: clamp(.25rem, 1.2cqi, .45rem); }
+    .forecast-box {
+      flex: 1; min-width: 0; text-align: center;
+      padding: clamp(.55rem, 2cqi, .9rem) clamp(.15rem, .8cqi, .3rem);
+      background: rgba(0,0,0,.15); border-radius: clamp(10px, 3cqi, 16px);
+      border: 1px solid rgba(255,255,255,.05);
+    }
+    .forecast-box .day-label {
+      font-size: clamp(.45rem, 1.5cqi, .58rem); text-transform: uppercase;
+      letter-spacing: .4px; font-weight: 700; opacity: .45;
+      margin-bottom: clamp(.15rem, .8cqi, .3rem);
+    }
+    .forecast-box .emoji {
+      font-size: clamp(1.8rem, 6cqi, 2.6rem); line-height: 1;
+      margin-bottom: clamp(.1rem, .5cqi, .2rem);
+    }
+    .forecast-box .desc {
+      font-size: clamp(.52rem, 1.8cqi, .68rem); font-weight: 700;
+      line-height: 1.2; letter-spacing: -.01em;
+    }
+
+    /* --- sparkline --- */
+    svg.spark { width: 100%; height: clamp(28px, 10cqi, 48px); display: block; margin-top: clamp(.35rem, 1.5cqi, .65rem); }
+
+    /* --- hidden --- */
+    .hidden { display: none !important; }
+
+    /* --- text --- */
+    .empty { opacity: .45; font-size: clamp(.68rem, 2.2cqi, .84rem); font-weight: 500; line-height: 1.4; }
+    .msg { font-size: clamp(.65rem, 2cqi, .82rem); font-weight: 500; margin-top: clamp(.25rem, 1cqi, .4rem); }
     .msg.ok { color: #4ade80; }
-    .msg.err { color: #f87171; }
-    .hidden { display: none; }
-    a { color: #60a5fa; }
-    .row { display: flex; flex-wrap: wrap; gap: 1.25rem; }
-    .stat { flex: 1 1 100px; }
-    .stat .v { font-size: 1.5rem; font-weight: 600; }
-    .stat .k { font-size: .75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
-    .badges { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .75rem; }
-    .badge { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: .35rem .6rem; font-size: .8rem; }
-    .badge b { display: block; font-size: .65rem; color: #94a3b8; font-weight: 600; }
-    svg { width: 100%; height: 64px; display: block; margin-top: .75rem; background: #0f172a; border-radius: 8px; }
-    .empty { color: #94a3b8; font-size: .9rem; }
+    .msg.err { color: #fb7185; }
+
+    /* --- claim --- */
+    .mac-badge {
+      font-family: ui-monospace, 'SF Mono', monospace; letter-spacing: 1.5px;
+      background: rgba(0,0,0,.2); padding: clamp(.25rem, 1cqi, .4rem) clamp(.4rem, 1.5cqi, .7rem);
+      border-radius: clamp(7px, 2cqi, 10px); font-size: clamp(.65rem, 2cqi, .8rem);
+      font-weight: 600; border: 1px solid rgba(255,255,255,.06);
+    }
+    .claim-btn {
+      width: 100%; padding: clamp(.55rem, 2cqi, .8rem); border: 0;
+      border-radius: clamp(8px, 2.5cqi, 12px);
+      background: linear-gradient(135deg, #3b82f6, #6366f1);
+      color: #fff; font-size: clamp(.78rem, 2.4cqi, .92rem);
+      font-weight: 700; cursor: pointer; font-family: inherit;
+      transition: transform .15s; box-shadow: 0 4px 16px rgba(59,130,246,.3);
+    }
+    .claim-btn:active { transform: scale(.97); }
+
+    /* --- hero --- */
+    .hero-icon { font-size: clamp(1.6rem, 6cqi, 2.4rem); text-align: center; margin-bottom: clamp(.3rem, 1.2cqi, .5rem); }
   </style>
 </head>
 <body>
+
   <main>
-    <h1>
-      <span>Meteorologus</span>
-      <span>
-        <button class="ghost inline hidden" id="refresh-btn">Refresh</button>
-        <button class="ghost inline hidden" id="signout-btn">Sign out</button>
-      </span>
-    </h1>
-    <p class="sub" id="subtitle">Your personal weather node.</p>
+    <div class="header hidden" id="app-header">
+      <h1>Meteorologus</h1>
+      <div class="header-btns">
+        <button id="refresh-btn">Refresh</button>
+        <button id="signout-btn">Sign out</button>
+      </div>
+    </div>
+    <div class="greeting hidden" id="greeting"></div>
 
-    <div class="card hidden" id="hero-card">
-      <h2>Your weather, on your device</h2>
-      <p>Sign in to see your weather nodes, live readings and the forecast prediction.</p>
-      <p class="empty">New node? Scan its QR code to open the claim page.</p>
+    <div class="card hidden" id="hero-card" style="text-align:center;">
+      <div class="hero-icon">🌤️</div>
+      <h2 style="font-size:clamp(.9rem,3cqi,1.12rem);font-weight:700;margin-bottom:.3rem;">Your weather, on your device</h2>
+      <p class="empty">Sign in to see your weather nodes, live readings and the forecast prediction.</p>
     </div>
 
-    <div class="card hidden" id="device-card">
-      <div>Device ID (MAC)</div>
-      <span class="mac" id="mac">—</span>
-      <div class="msg" id="claim-state"></div>
-    </div>
-
-    <div class="card hidden" id="auth-card">
-      <h2 id="auth-title">Sign in</h2>
+    <div class="card auth-card hidden" id="auth-card">
+      <div class="title" id="auth-title">Sign in</div>
       <label for="email">Email</label>
-      <input type="email" id="email" autocomplete="username">
+      <input type="email" id="email" autocomplete="username" inputmode="email">
       <label for="password">Password</label>
       <input type="password" id="password" autocomplete="current-password">
       <button id="auth-btn">Sign in</button>
       <button class="ghost" id="toggle-btn">Create a new account</button>
-      <div class="msg err" id="auth-err"></div>
+      <div style="text-align:center;margin-top:clamp(.35rem,1.5cqi,.6rem);">
+        <button class="link-btn" id="forgot-btn">Forgot password?</button>
+      </div>
+      <div class="err" id="auth-err"></div>
     </div>
 
     <div class="card hidden" id="claim-card">
-      <h2>Claim this device</h2>
-      <p id="signed-in-as"></p>
-      <button id="claim-btn">Claim device</button>
+      <h2 style="font-size:clamp(.88rem,2.8cqi,1.08rem);font-weight:700;margin-bottom:.2rem;">Claim this device</h2>
+      <p id="signed-in-as" style="font-size:clamp(.65rem,2cqi,.8rem);opacity:.5;font-weight:500;"></p>
+      <div style="display:flex;align-items:center;gap:clamp(.3rem,1.2cqi,.5rem);margin:clamp(.35rem,1.5cqi,.6rem) 0;">
+        <span class="mac-badge" id="mac">—</span>
+        <div class="msg" id="claim-state"></div>
+      </div>
+      <button id="claim-btn" class="claim-btn">Claim device</button>
       <div class="msg" id="claim-result"></div>
     </div>
 
-    <div class="card hidden" id="done-card">
-      <h2>Device claimed!</h2>
-      <p>The node will pick up its key when it connects and start syncing.</p>
+    <div class="card hidden" id="done-card" style="text-align:center;">
+      <div style="font-size:clamp(1.5rem,5cqi,2.2rem);margin-bottom:.3rem;">✅</div>
+      <h2 style="font-size:clamp(.88rem,2.8cqi,1.08rem);font-weight:700;">Device claimed!</h2>
+      <p class="empty" style="margin-top:.25rem;">The node will pick up its key when it connects and start syncing.</p>
     </div>
 
     <div id="dash" class="hidden"></div>
@@ -117,26 +299,130 @@
 
     const $ = id => document.getElementById(id);
 
-    // ---------- WMO weather mapping (mirrors firmware classifyCode) ----------
-    function wmoLabel(raw) {
-      const code = Number(raw);
-      if (!isFinite(code)) return "—";
-      if (code <= 10) return "Sunny";
-      if (code <= 20) return "Clear";
-      if (code <= 40) return "Slightly Cloudy";
-      if (code <= 60) return "Cloud";
-      if (code <= 80) return "Light Rain";
-      if (code <= 99) return "Rain";
-      return "—";
+    function setGreeting() {
+      const h = new Date().getHours();
+      let g;
+      if (h < 6)       g = "Good night";
+      else if (h < 12)  g = "Good morning";
+      else if (h < 17)  g = "Good afternoon";
+      else if (h < 20)  g = "Good evening";
+      else              g = "Good night";
+      $("greeting").textContent = g + ".";
     }
 
-    function fmtEpoch(ts) {
-      if (!ts || ts < 1000000) return "unknown";
-      return new Date(ts * 1000).toLocaleString();
+    function wmoInfo(code) {
+      const c = Number(code);
+      if (!isFinite(c)) return { emoji: "—", label: "Unknown" };
+      if (c <= 10) return { emoji: "☀️", label: "Sunny" };
+      if (c <= 20) return { emoji: "🌙", label: "Clear" };
+      if (c <= 40) return { emoji: "⛅", label: "Slightly Cloudy" };
+      if (c <= 60) return { emoji: "☁️", label: "Cloud" };
+      if (c <= 80) return { emoji: "🌦️", label: "Light Rain" };
+      return { emoji: "🌧️", label: "Rain" };
     }
 
-    // ---------- Dashboard ----------
-    function renderDeviceCard(mac, data) {
+    function wmoCategory(code) {
+      const c = Number(code);
+      if (!isFinite(c)) return "clear";
+      if (c <= 10) return "sunny";
+      if (c <= 20) return "clear";
+      if (c <= 40) return "slightly-cloudy";
+      if (c <= 60) return "cloud";
+      if (c <= 80) return "light-rain";
+      return "rain";
+    }
+
+    const THEMES = {
+      sunny: {
+        morning:   { bg: "linear-gradient(160deg,#fef3c7,#fbbf24,#f97316)", color: "#1e293b", bar: "#f97316" },
+        afternoon: { bg: "linear-gradient(160deg,#fef9c3,#facc15,#ea580c)", color: "#1e293b", bar: "#ea580c" },
+        evening:   { bg: "linear-gradient(160deg,#78350f,#f97316,#fbbf24)", color: "#fffbeb", bar: "#78350f" },
+        night:     { bg: "linear-gradient(160deg,#1c1917,#78350f,#b45309)", color: "#fef3c7", bar: "#1c1917" }
+      },
+      clear: {
+        morning:   { bg: "linear-gradient(160deg,#fce7f3,#f472b6,#ec4899)", color: "#1e293b", bar: "#ec4899" },
+        afternoon: { bg: "linear-gradient(160deg,#e0f2fe,#38bdf8,#0284c7)", color: "#0c4a6e", bar: "#0284c7" },
+        evening:   { bg: "linear-gradient(160deg,#312e81,#7c3aed,#f472b6)", color: "#f1f5f9", bar: "#312e81" },
+        night:     { bg: "linear-gradient(160deg,#020617,#1e1b4b,#312e81)", color: "#e2e8f0", bar: "#020617" }
+      },
+      "slightly-cloudy": {
+        morning:   { bg: "linear-gradient(160deg,#e2e8f0,#fbbf24,#fb923c)", color: "#1e293b", bar: "#fb923c" },
+        afternoon: { bg: "linear-gradient(160deg,#cbd5e1,#94a3b8,#60a5fa)", color: "#0f172a", bar: "#60a5fa" },
+        evening:   { bg: "linear-gradient(160deg,#1e1b4b,#6366f1,#94a3b8)", color: "#f1f5f9", bar: "#1e1b4b" },
+        night:     { bg: "linear-gradient(160deg,#0f172a,#1e293b,#334155)", color: "#e2e8f0", bar: "#0f172a" }
+      },
+      cloud: {
+        morning:   { bg: "linear-gradient(160deg,#d1d5db,#94a3b8,#64748b)", color: "#1e293b", bar: "#64748b" },
+        afternoon: { bg: "linear-gradient(160deg,#94a3b8,#64748b,#475569)", color: "#f1f5f9", bar: "#475569" },
+        evening:   { bg: "linear-gradient(160deg,#334155,#475569,#64748b)", color: "#e2e8f0", bar: "#334155" },
+        night:     { bg: "linear-gradient(160deg,#0f172a,#1e293b,#334155)", color: "#cbd5e1", bar: "#0f172a" }
+      },
+      "light-rain": {
+        morning:   { bg: "linear-gradient(160deg,#94a3b8,#64748b,#3b82f6)", color: "#f1f5f9", bar: "#3b82f6" },
+        afternoon: { bg: "linear-gradient(160deg,#64748b,#475569,#2563eb)", color: "#e2e8f0", bar: "#2563eb" },
+        evening:   { bg: "linear-gradient(160deg,#1e293b,#334155,#4f46e5)", color: "#cbd5e1", bar: "#1e293b" },
+        night:     { bg: "linear-gradient(160deg,#020617,#0f172a,#1e1b4b)", color: "#94a3b8", bar: "#020617" }
+      },
+      rain: {
+        morning:   { bg: "linear-gradient(160deg,#64748b,#475569,#1d4ed8)", color: "#e2e8f0", bar: "#1d4ed8" },
+        afternoon: { bg: "linear-gradient(160deg,#475569,#334155,#1e40af)", color: "#cbd5e1", bar: "#1e40af" },
+        evening:   { bg: "linear-gradient(160deg,#1e293b,#1e1b4b,#3730a3)", color: "#94a3b8", bar: "#1e293b" },
+        night:     { bg: "linear-gradient(160deg,#020617,#0f172a,#1e1b4b)", color: "#64748b", bar: "#020617" }
+      }
+    };
+
+    let currentWeatherCode = null;
+
+    function getTimePeriod() {
+      const h = new Date().getHours();
+      if (h >= 6 && h < 12) return "morning";
+      if (h >= 12 && h < 17) return "afternoon";
+      if (h >= 17 && h < 20) return "evening";
+      return "night";
+    }
+
+    function applyTheme(weatherCode) {
+      if (weatherCode != null) currentWeatherCode = weatherCode;
+      const cat = wmoCategory(currentWeatherCode);
+      const time = getTimePeriod();
+      const theme = THEMES[cat][time];
+      document.body.style.background = theme.bg;
+      document.body.style.color = theme.color;
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute("content", theme.bar);
+    }
+    applyTheme(null);
+    setInterval(() => applyTheme(null), 60000);
+
+    function fmtTime(ts) {
+      if (!ts || ts < 1000000) return "";
+      return new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+
+    function sparkline(nodes) {
+      const pts = nodes.map(n => n.t).filter(v => typeof v === "number" && !isNaN(v));
+      if (pts.length < 2) return "";
+      const W = 440, H = 50, pad = 6;
+      let mn = Math.min(...pts), mx = Math.max(...pts);
+      if (mx - mn < 1) { mn -= 0.5; mx += 0.5; }
+      const x = i => pad + (W - 2 * pad) * (i / (pts.length - 1));
+      const y = v => H - pad - (H - 2 * pad) * ((v - mn) / (mx - mn));
+      const coords = pts.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+      const last = pts.length - 1;
+      return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="currentColor" stop-opacity=".2"/>
+            <stop offset="100%" stop-color="currentColor" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <polygon points="${coords} ${x(last).toFixed(1)},${H} ${x(0).toFixed(1)},${H}" fill="url(#sg)"/>
+        <polyline points="${coords}" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity=".45"/>
+        <circle cx="${x(last).toFixed(1)}" cy="${y(pts[last]).toFixed(1)}" r="3.5" fill="currentColor" opacity=".85"/>
+      </svg>`;
+    }
+
+    function renderDashboard(mac, data) {
       const nodes = data ? Object.values(data).sort((a, b) => (a.ts || 0) - (b.ts || 0)) : [];
       const latest = nodes.length ? nodes[nodes.length - 1] : null;
 
@@ -148,101 +434,152 @@
         }
       }
 
-      const el = document.createElement("div");
-      el.className = "card";
-      el.innerHTML = `<div class="mac">${mac}</div>`;
+      const today = latest ? wmoInfo(latest.weather_code) : wmoInfo(null);
+      applyTheme(latest ? latest.weather_code : null);
+      const t = latest && typeof latest.t === "number" ? latest.t.toFixed(1) : "—";
+      const h = latest && typeof latest.h === "number" ? Math.round(latest.h) : "—";
+      const p = latest && typeof latest.p === "number" ? latest.p.toFixed(1) : "—";
 
-      const body = document.createElement("div");
-      if (!latest) {
-        body.className = "empty";
-        body.textContent = "No data yet — the node syncs once it connects to your WiFi.";
-      } else {
-        const t = typeof latest.t === "number" ? latest.t.toFixed(1) : "—";
-        const h = typeof latest.h === "number" ? Math.round(latest.h) : "—";
-        const p = typeof latest.p === "number" ? latest.p.toFixed(1) : "—";
-        const updated = document.createElement("div");
-        updated.className = "msg ok";
-        updated.style.minHeight = "0";
-        updated.textContent = "Updated " + fmtEpoch(latest.ts);
-        el.appendChild(updated);
+      const dayNames = ["Day 1", "Day 2", "Day 3"];
+      const forecastBoxes = [0, 1, 2].map(i => {
+        if (forecastNode && forecastNode.forecast && forecastNode.forecast[i] != null) {
+          const info = wmoInfo(forecastNode.forecast[i]);
+          return `<div class="forecast-box">
+            <div class="day-label">${dayNames[i]}</div>
+            <div class="emoji">${info.emoji}</div>
+            <div class="desc">${info.label}</div>
+          </div>`;
+        }
+        return `<div class="forecast-box">
+          <div class="day-label">${dayNames[i]}</div>
+          <div class="emoji">—</div>
+          <div class="desc">No data</div>
+        </div>`;
+      }).join("");
 
-        body.innerHTML = `
-          <div class="row">
-            <div class="stat"><div class="v">${t}°C</div><div class="k">Temp</div></div>
-            <div class="stat"><div class="v">${h}%</div><div class="k">Humidity</div></div>
-            <div class="stat"><div class="v">${p} hPa</div><div class="k">Pressure</div></div>
+      const updated = latest ? fmtTime(latest.ts) : "";
+
+      return `
+        <div class="swipe-wrap" id="swipe">
+          <div class="slide">
+            <div class="card">
+              <div class="current-emoji">${today.emoji}</div>
+              <div class="current-state">${today.label}</div>
+              <div class="current-time">${updated ? "Updated " + updated : ""}</div>
+              <div class="big-temp">${t}<span>°C</span></div>
+              <div class="readings">
+                <div class="reading"><div class="val">${h}%</div><div class="lbl">Humidity</div></div>
+                <div class="reading"><div class="val">${p}</div><div class="lbl">hPa</div></div>
+              </div>
+              ${sparkline(nodes)}
+            </div>
           </div>
-          ${sparkline(nodes)}
-          ${forecastHtml(forecastNode)}
-        `;
-      }
-      el.appendChild(body);
-      return el;
+          <div class="slide">
+            <div class="card">
+              <div class="forecast-title">3-Day Forecast</div>
+              <div class="forecast-grid">${forecastBoxes}</div>
+            </div>
+          </div>
+        </div>
+        <div class="dots">
+          <div class="dot active" id="dot0"></div>
+          <div class="dot" id="dot1"></div>
+        </div>
+      `;
     }
 
-    function sparkline(nodes) {
-      const pts = nodes.map(n => n.t).filter(v => typeof v === "number" && !isNaN(v));
-      if (pts.length < 2) return "";
-      const W = 680, H = 64, pad = 4;
-      let mn = Math.min(...pts), mx = Math.max(...pts);
-      if (mx - mn < 1) { mn -= 0.5; mx += 0.5; }
-      const x = i => pad + (W - 2 * pad) * (i / (pts.length - 1));
-      const y = v => H - pad - (H - 2 * pad) * ((v - mn) / (mx - mn));
-      const coords = pts.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
-      return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-        <polyline points="${coords}" fill="none" stroke="#60a5fa" stroke-width="2"/>
-        <circle cx="${x(pts.length - 1).toFixed(1)}" cy="${y(pts[pts.length - 1]).toFixed(1)}" r="3" fill="#60a5fa"/>
-      </svg>`;
-    }
+    function initDots() {
+      const wrap = $("swipe");
+      if (!wrap) return;
+      wrap.addEventListener("scroll", () => {
+        const idx = Math.round(wrap.scrollLeft / wrap.offsetWidth);
+        const d0 = $("dot0"), d1 = $("dot1");
+        if (d0 && d1) { d0.classList.toggle("active", idx === 0); d1.classList.toggle("active", idx === 1); }
+      });
 
-    function forecastHtml(node) {
-      if (!node) return "";
-      const codes = ["Now", "Day 1", "Day 2", "Day 3"];
-      const values = [node.weather_code, node.forecast[0], node.forecast[1], node.forecast[2]];
-      return `<div class="badges">
-        ${values.map((c, i) => `<span class="badge"><b>${codes[i]}</b>${wmoLabel(c)}</span>`).join("")}
-      </div>`;
+      let isDown = false, startX, scrollLeft, vel = 0, lastX = 0, lastT = 0, raf;
+      wrap.addEventListener("mousedown", e => {
+        isDown = true; vel = 0; lastX = e.pageX; lastT = Date.now();
+        wrap.style.cursor = "grabbing";
+        wrap.style.scrollSnapType = "none";
+        wrap.style.userSelect = "none";
+        wrap.style.transition = "none";
+        startX = e.pageX;
+        scrollLeft = wrap.scrollLeft;
+        e.preventDefault();
+        cancelAnimationFrame(raf);
+      });
+      document.addEventListener("mousemove", e => {
+        if (!isDown) return;
+        const now = Date.now();
+        const dt = now - lastT || 1;
+        vel = (e.pageX - lastX) / dt;
+        lastX = e.pageX; lastT = now;
+        wrap.scrollLeft = scrollLeft - (e.pageX - startX);
+      });
+      document.addEventListener("mouseup", () => {
+        if (!isDown) return;
+        isDown = false;
+        wrap.style.cursor = "";
+        wrap.style.userSelect = "";
+        const w = wrap.offsetWidth;
+        let target = Math.round(wrap.scrollLeft / w) * w;
+        const momentum = vel * 120;
+        if (Math.abs(vel) > 0.3) {
+          target = vel > 0
+            ? Math.floor(wrap.scrollLeft / w) * w
+            : Math.ceil(wrap.scrollLeft / w) * w;
+        }
+        target = Math.max(0, Math.min(target, w));
+        wrap.style.transition = "scroll-left .35s cubic-bezier(.4,0,.2,1)";
+        wrap.scrollTo({ left: target, behavior: "smooth" });
+        setTimeout(() => {
+          wrap.style.transition = "";
+          wrap.style.scrollSnapType = "";
+          const idx = Math.round(wrap.scrollLeft / w);
+          const d0 = $("dot0"), d1 = $("dot1");
+          if (d0 && d1) { d0.classList.toggle("active", idx === 0); d1.classList.toggle("active", idx === 1); }
+        }, 380);
+      });
     }
 
     async function loadDashboard(user) {
       const dash = $("dash");
       dash.innerHTML = "";
       dash.classList.remove("hidden");
-      $("refresh-btn").classList.remove("hidden");
+      $("app-header").classList.remove("hidden");
+      $("greeting").classList.remove("hidden");
+      setGreeting();
 
       try {
         const snap = await db.ref("users/" + user.uid + "/owned_devices").once("value");
         const owned = snap.val() || {};
         const macs = Object.keys(owned);
         if (!macs.length) {
-          dash.innerHTML = '<div class="card"><h2>Your devices</h2><p class="empty">You have no claimed nodes yet. Scan a node\'s QR code to claim it.</p></div>';
+          dash.innerHTML = '<div class="card" style="text-align:center;"><div style="font-size:clamp(1.5rem,5cqi,2rem);margin-bottom:.3rem;">📡</div><h2 style="font-size:clamp(.82rem,2.8cqi,1rem);font-weight:700;">No devices yet</h2><p class="empty" style="margin-top:.25rem;">Scan a node\'s QR code to claim it.</p></div>';
           return;
         }
-        const title = document.createElement("div");
-        title.className = "card";
-        title.innerHTML = `<h2>Your devices (${macs.length})</h2>`;
-        dash.appendChild(title);
         for (const mac of macs) {
           let data = null;
           try {
             const s = await db.ref("devices/" + mac).once("value");
             data = s.val();
-          } catch (e) { /* public read; tolerate */ }
-          dash.appendChild(renderDeviceCard(mac, data));
+          } catch (e) { /* tolerate */ }
+          dash.innerHTML += renderDashboard(mac, data);
         }
+        initDots();
       } catch (e) {
         dash.innerHTML = `<div class="card"><p class="msg err">Failed to load devices: ${e.message}</p></div>`;
       }
     }
 
-    // ---------- Claim page logic (device link) ----------
     const macEl = $("mac"), claimState = $("claim-state"),
           authCard = $("auth-card"), claimCard = $("claim-card"),
-          doneCard = $("done-card"), deviceCard = $("device-card"), heroCard = $("hero-card");
+          doneCard = $("done-card"), heroCard = $("hero-card");
 
     if (!deviceId) {
-      macEl.textContent = "invalid link";
-      claimState.textContent = "No device ID in the URL. Open the link from the device's QR code.";
+      macEl.textContent = "no device";
+      claimState.textContent = "No device ID in the URL.";
       claimState.className = "msg err";
     } else {
       macEl.textContent = deviceId;
@@ -264,7 +601,8 @@
     }
 
     const emailInput = $("email"), passInput = $("password"), authBtn = $("auth-btn"),
-          authTitle = $("auth-title"), authErr = $("auth-err"), toggleBtn = $("toggle-btn");
+          authTitle = $("auth-title"), authErr = $("auth-err"), toggleBtn = $("toggle-btn"),
+          forgotBtn = $("forgot-btn");
 
     let signupMode = false;
     toggleBtn.addEventListener("click", () => {
@@ -289,22 +627,37 @@
       }
     });
 
+    forgotBtn.addEventListener("click", async () => {
+      const email = emailInput.value.trim();
+      authErr.textContent = "";
+      if (!email) { authErr.textContent = "Enter your email above, then tap Forgot password."; return; }
+      forgotBtn.disabled = true;
+      try {
+        await firebase.auth().sendPasswordResetEmail(email);
+        authErr.style.color = "#4ade80";
+        authErr.textContent = "Reset email sent to " + email + ". Check your inbox.";
+        setTimeout(() => { authErr.style.color = ""; }, 5000);
+      } catch (e) {
+        authErr.textContent = e.message;
+      } finally {
+        forgotBtn.disabled = false;
+      }
+    });
+
     firebase.auth().onAuthStateChanged(user => {
       $("signed-in-as").textContent = user ? "Signed in as " + user.email : "";
-      $("signout-btn").classList.toggle("hidden", !user);
+      $("app-header").classList.add("hidden");
+      $("greeting").classList.add("hidden");
+      $("dash").classList.add("hidden");
+      $("dash").innerHTML = "";
       authCard.classList.toggle("hidden", !!user);
-      deviceCard.classList.toggle("hidden", !deviceId);
+      claimCard.classList.toggle("hidden", !deviceId || !!user);
+      doneCard.classList.add("hidden");
       heroCard.classList.toggle("hidden", !!deviceId || !!user);
 
       if (user) {
-        $("subtitle").textContent = "Your weather node dashboard.";
         loadDashboard(user);
         refreshDeviceState(user);
-      } else {
-        $("dash").classList.add("hidden");
-        claimCard.classList.add("hidden");
-        doneCard.classList.add("hidden");
-        $("subtitle").textContent = "Your personal weather node.";
       }
     });
 

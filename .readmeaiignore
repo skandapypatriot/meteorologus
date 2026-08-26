@@ -16,4 +16,4 @@ ui-debug.log*
 # IDE files
 .vscode/*
 !.vscode/settings.json
-!.vscode/tasks.json
+!.vscode/tasks.json	
