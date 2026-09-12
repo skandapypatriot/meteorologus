@@ -22,6 +22,8 @@ The Meteorologus firmware turns an ESP32-C3 into a self-contained weather node: 
   - [Deep Sleep](#deep-sleep)
 - [On-Device ML Model](#on-device-ml-model)
 - [Cloud Sync Details](#cloud-sync-details)
+- [Home Assistant / MQTT](#home-assistant--mqtt)
+- [Air Quality (BME680)](#air-quality-bme680)
 - [Troubleshooting](#troubleshooting)
 
 ---
@@ -35,8 +37,9 @@ Everything physical lives in this section: the parts you need, how they connect,
 | Component | Role | Notes |
 | :--- | :--- | :--- |
 | ESP32-C3 Mini | MCU (Wi-Fi, BLE disabled at runtime) | `esp32-c3-devkitm-1` board target |
-| DHT11 *(or AHT20 / BME280)* | Temperature + humidity | Auto-detected at boot, priority: BME280 > AHT20 > DHT11 |
-| BMP180 *(or BMP280 / BME280)* | Barometric pressure | Auto-detected, addresses 0x76/0x77 scanned |
+| DHT11 *(or AHT20 / BME280 / BME680)* | Temperature + humidity | Auto-detected at boot, priority: BME680 > BME280 > AHT20 > DHT11 |
+| BMP180 *(or BMP280 / BME280 / BME680)* | Barometric pressure | Auto-detected, addresses 0x76/0x77 scanned |
+| BME680 *(optional)* | Adds air quality (gas resistance) on top of temp/humidity/pressure | Same I²C bus, no extra pins - chip ID 0x61 at 0x76/0x77 |
 | SSD1306 0.96" OLED 128×64 | Display (U8g2, hardware I²C) | Address 0x3C |
 | DS3231 RTC *(optional)* | Timekeeping through sleep | Address 0x68; **always powered** — never behind the switch |
 | **BC547** (NPN, TO-92) | Peripheral power switch | Cuts OLED + sensors completely during sleep |
@@ -146,6 +149,8 @@ Set in `platformio.ini` under `build_flags`:
 | :--- | :--- | :--- |
 | `-DLOGGING_ENABLED=1` | `1` | Serial logging; `0` compiles all logs out |
 | `-DRTC_SUPPORT=1` | `1` | DS3231 support; `0` removes RTC code entirely |
+| `-DHEADLESS_MODE=0` | `0` | `1` = no OLED wired up at all: skips display init/draw entirely. Claim URL for an unclaimed node prints to serial every 30s instead of showing a QR. |
+| `-DHA_MQTT_ENABLED=1` | `1` | `0` compiles MQTT out. When on, readings publish to a broker with Home Assistant auto-discovery - see [Home Assistant / MQTT](#home-assistant--mqtt) below. |
 | `-DARDUINO_LOOP_STACK_SIZE=65536` | — | Larger loop stack for model inference |
 
 Timing constants live in `src/main.cpp`:
@@ -176,11 +181,12 @@ Cold boot / timer wake / button wake
 
 ### OLED Screens
 
-Claimed nodes cycle three screens every 5 s:
+Claimed nodes cycle three screens every 5 s (four on a BME680 node):
 
 1. **Live readings** — clock, big temperature, humidity & pressure.
 2. **Connectivity** — Wi-Fi state, signal bars (RSSI-mapped), forecast source (`Firebase` vs `Local AI`).
 3. **Forecast** — three day-icons on top, today's condition with icon below.
+4. **Air Quality** *(BME680 only)* — AQI heuristic score, a Good/Moderate/Poor label, and raw gas resistance in kΩ.
 
 Unpaired nodes alternate between an instructions screen and a full-screen QR code encoding `https://<host>/<DEVICE_MAC>`.
 
@@ -261,9 +267,36 @@ After the awake window the node turns the peripheral power switch off (GPIO 10 �
 
 ## Cloud Sync Details
 
-- **POST** `{t, h, p, ts}` appends a node under `/devices/<MAC>` (only when claimed and time is valid).
+- **POST** `{t, h, p, ts}` appends a node under `/devices/<MAC>` (only when claimed and time is valid). On a BME680 node this also includes `gas` (kΩ) and `aqi` (the same 0-500 heuristic as the OLED/MQTT) - extra keys the inference server ignores, there for the web dashboard or your own tooling.
 - **GET** the last 10 nodes ordered by key; the newest one carrying `forecast` wins and updates the UI.
 - All requests go over HTTPS (`WiFiClientSecure`, cert verification currently disabled via `setInsecure()`).
+
+## Home Assistant / MQTT
+
+Independent of the Firebase claim flow - works whether or not the device has ever been claimed in the web app, so a purely local setup with no cloud account is fine too.
+
+1. Set your broker in `src/main.cpp`:
+
+```cpp
+#define MQTT_BROKER_HOST "192.168.1.10"
+#define MQTT_BROKER_PORT 1883
+#define MQTT_USER        ""   // leave blank if the broker has no auth
+#define MQTT_PASS        ""
+```
+
+2. Flash. Once Wi-Fi connects, the node:
+   - Connects to the broker as `meteorologus-<MAC>` with a last-will of `offline` on `meteorologus/<MAC>/availability`.
+   - Publishes retained Home Assistant discovery configs under `homeassistant/sensor/<MAC>_<entity>/config` for temperature, humidity, pressure, Wi-Fi signal, forecast, and (if a BME680 is fitted) gas resistance + air quality.
+   - Publishes readings as JSON every 5s to `meteorologus/<MAC>/state`.
+3. In Home Assistant, with the MQTT integration already set up, the entities appear automatically under a "Meteorologus \<MAC\>" device - no YAML needed.
+
+Because the node deep-sleeps most of the hour, expect the device to show "unavailable" between wake cycles - that's expected for a battery node, not a bug.
+
+## Air Quality (BME680)
+
+Fit a BME680 instead of a BME280/BMP280 (same footprint family, same I²C bus, no new wiring) and it's auto-detected via chip ID `0x61` at `0x76`/`0x77`, providing temperature, humidity and pressure like the BME280 plus a gas-resistance reading.
+
+The firmware turns that into a rough 0 (clean) - 500 (bad) `air_quality_index` heuristic (`estimate_air_quality()` in `main.cpp`). Read the caveats in that function's comment before trusting the number: it is **not** the calibrated Bosch BSEC algorithm, hasn't been validated against a reference sensor, and the gas heater wants several minutes of continuous run time to fully stabilize - which this node's ~20s/hour awake window doesn't give it. Treat it as a relative trend (via the Home Assistant history graph) rather than an absolute AQI reading. Swapping in the real BSEC library later is a natural next step if that precision matters.
 
 ## Troubleshooting
 

@@ -5,13 +5,16 @@
 #include <Adafruit_BME280.h>
 #include <Adafruit_BMP280.h>
 #include <Adafruit_AHTX0.h>
+#include <Adafruit_BME680.h>
 #include <U8g2lib.h>
 #include <WiFi.h>
 #include <WebServer.h>
 #include <DNSServer.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <PubSubClient.h>
 #include <time.h>
+#include <math.h>
 #include <esp_sleep.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
@@ -48,6 +51,30 @@
   #define LOGF(...)   ((void)0)
 #endif
 
+// --- HEADLESS MODE ---
+// Set to 1 for sensor-only nodes with no OLED wired up at all: skips display
+// init and every draw call. The unclaimed-device claim URL is printed to the
+// serial log every 30s instead of shown as a QR code.
+#ifndef HEADLESS_MODE
+  #define HEADLESS_MODE 0
+#endif
+
+// --- HOME ASSISTANT / MQTT ---
+// Set to 0 to compile MQTT out entirely. This is fully independent of the
+// Firebase claim flow above - a node can publish to MQTT whether or not it
+// has ever been claimed in the web app, so a local-only / no-cloud-account
+// setup works too.
+#ifndef HA_MQTT_ENABLED
+  #define HA_MQTT_ENABLED 1
+#endif
+#define MQTT_BROKER_HOST      "192.168.1.10"   // <-- set to your broker's IP/hostname
+#define MQTT_BROKER_PORT      1883
+#define MQTT_USER             ""               // leave blank if the broker has no auth
+#define MQTT_PASS             ""
+#define MQTT_DISCOVERY_PREFIX "homeassistant"  // matches HA's default discovery prefix
+#define MQTT_TOPIC_PREFIX     "meteorologus"
+#define MQTT_SYNC_INTERVAL_MS 5000UL
+
 // Pin Definitions
 #define DHTPIN 7
 #define DHTTYPE DHT11
@@ -62,8 +89,12 @@
 #define PROVISION_RECHECK_INTERVAL 30000 // poll for a claim every 30s while unpaired
 #define AWAKE_DURATION 20000     // Stay awake for 20s (enough to show all 3 screens) before Deep Sleep
 #define WIFI_CONNECT_TIMEOUT 5000
-#define WIFI_SSID "Samsung Galaxy M47 5G"
-#define WIFI_PASS "Sahana27"
+// SECURITY: these are compile-time FALLBACK defaults only, overridden by
+// whatever is saved via the Wi-Fi Setup Portal (see README). Never commit
+// real credentials here - anything in git history is effectively public,
+// even after being replaced in a later commit.
+#define WIFI_SSID "YourWiFiName"
+#define WIFI_PASS "YourWiFiPassword"
 #define WIFI_PORTAL_TIMEOUT 0
 #define WIFI_OFFLINE_LIMIT_SECONDS 864000UL // 10 days
 #define FIREBASE_BASE_URL "https://weather-monitor-f4248-default-rtdb.asia-southeast1.firebasedatabase.app"
@@ -96,13 +127,18 @@ Adafruit_BMP085 bmp;
 Adafruit_BME280 bme;
 Adafruit_BMP280 bmp280;
 Adafruit_AHTX0 aht;
+Adafruit_BME680 bme680;
 U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
 
-enum class HumiditySensor { NONE, DHT11, AHT20, BME280 };
-enum class PressureSensor { NONE, BMP180, BMP280, BME280 };
+enum class HumiditySensor { NONE, DHT11, AHT20, BME280, BME680 };
+enum class PressureSensor { NONE, BMP180, BMP280, BME280, BME680 };
+enum class GasSensor { NONE, BME680 };
 HumiditySensor humidity_sensor = HumiditySensor::NONE;
 PressureSensor pressure_sensor = PressureSensor::NONE;
+GasSensor gas_sensor = GasSensor::NONE;
 uint8_t pressure_sensor_address = 0;
+float gas_resistance_kohm = NAN;   // raw BME680 gas resistance
+float air_quality_index = NAN;     // rough 0(clean)-500(bad) heuristic, see estimate_air_quality()
 
 #if RTC_SUPPORT
 RTC_DS3231 rtc;
@@ -207,6 +243,7 @@ const char* humidity_sensor_name() {
     case HumiditySensor::DHT11: return "DHT11";
     case HumiditySensor::AHT20: return "AHT20";
     case HumiditySensor::BME280: return "BME280";
+    case HumiditySensor::BME680: return "BME680";
     default: return "none";
   }
 }
@@ -216,8 +253,29 @@ const char* pressure_sensor_name() {
     case PressureSensor::BMP180: return "BMP180";
     case PressureSensor::BMP280: return "BMP280";
     case PressureSensor::BME280: return "BME280";
+    case PressureSensor::BME680: return "BME680";
     default: return "none";
   }
+}
+
+// Very rough heuristic - NOT the calibrated Bosch BSEC IAQ algorithm (that's
+// a separate closed-source library). Higher gas resistance roughly means
+// cleaner air; this maps that to a 0 (clean) - 500 (bad) score on a log
+// curve so it's usable for relative trending in Home Assistant, not as an
+// absolute AQI reading. It also has NOT been validated against a reference
+// air-quality sensor, and because the node only wakes for ~20s/hour the
+// heater rarely reaches the several-minutes of continuous run time a BME680
+// needs for a fully stable reading - expect noisier numbers than a node
+// that stays powered.
+float estimate_air_quality(float resistance_kohm) {
+  if (isnan(resistance_kohm) || resistance_kohm <= 0) return NAN;
+  float clamped = resistance_kohm;
+  if (clamped < 5.0F) clamped = 5.0F;
+  if (clamped > 300.0F) clamped = 300.0F;
+  float score = 500.0F - (500.0F * (log(clamped) - log(5.0F)) / (log(300.0F) - log(5.0F)));
+  if (score < 0) score = 0;
+  if (score > 500) score = 500;
+  return score;
 }
 
 uint8_t read_i2c_register(uint8_t address, uint8_t reg) {
@@ -240,6 +298,19 @@ void detect_sensors() {
 
   for (uint8_t address : {uint8_t(0x76), uint8_t(0x77)}) {
     uint8_t chip_id = read_i2c_register(address, 0xD0);
+    if (chip_id == 0x61 && bme680.begin(address)) {
+      humidity_sensor = HumiditySensor::BME680;
+      pressure_sensor = PressureSensor::BME680;
+      pressure_sensor_address = address;
+      gas_sensor = GasSensor::BME680;
+      bme680.setTemperatureOversampling(BME680_OS_8X);
+      bme680.setHumidityOversampling(BME680_OS_2X);
+      bme680.setPressureOversampling(BME680_OS_4X);
+      bme680.setIIRFilterSize(BME680_FILTER_SIZE_3);
+      bme680.setGasHeater(320, 150); // 320°C for 150ms
+      LOGLN("[sensor] Detected BME680 (temp/humidity/pressure/gas)");
+      return;
+    }
     if (chip_id == 0x60 && bme.begin(address, &Wire)) {
       humidity_sensor = HumiditySensor::BME280;
       pressure_sensor = PressureSensor::BME280;
@@ -561,6 +632,7 @@ void read_sensors() {
   temp = NAN;
   humidity = NAN;
   pressure = NAN;
+  bool bme680_ok = false;
 
   if (humidity_sensor == HumiditySensor::DHT11) {
     temp = dht.readTemperature();
@@ -573,6 +645,12 @@ void read_sensors() {
   } else if (humidity_sensor == HumiditySensor::BME280) {
     temp = bme.readTemperature();
     humidity = bme.readHumidity();
+  } else if (humidity_sensor == HumiditySensor::BME680) {
+    bme680_ok = bme680.performReading();
+    if (bme680_ok) {
+      temp = bme680.temperature;
+      humidity = bme680.humidity;
+    }
   }
 
   if (pressure_sensor == PressureSensor::BMP180) {
@@ -584,6 +662,13 @@ void read_sensors() {
   } else if (pressure_sensor == PressureSensor::BME280) {
     temp = bme.readTemperature();
     pressure = bme.readPressure() / 100.0F;
+  } else if (pressure_sensor == PressureSensor::BME680 && bme680_ok) {
+    pressure = bme680.pressure / 100.0F; // already updated by performReading() above
+  }
+
+  if (gas_sensor == GasSensor::BME680 && bme680_ok) {
+    gas_resistance_kohm = bme680.gas_resistance / 1000.0F;
+    air_quality_index = estimate_air_quality(gas_resistance_kohm);
   }
 
   bmp_present = pressure_sensor != PressureSensor::NONE;
@@ -604,6 +689,9 @@ void print_sensor_data(){
     LOGLN("Failed to read from DHT11 sensor!");
   }
   LOGF("Pressure: %.2f hPa\n", pressure);
+  if (gas_sensor == GasSensor::BME680 && !isnan(gas_resistance_kohm)) {
+    LOGF("Gas: %.1f kOhm | Air Quality (heuristic 0-500): %.0f\n", gas_resistance_kohm, air_quality_index);
+  }
   
   if (hasForecast) {
     if (xSemaphoreTake(fb_mutex, 100)) {
@@ -700,7 +788,14 @@ bool fetch_and_sync_firebase() {
   if (https.begin(client, deviceUrl) && valid_time && !isnan(temp) && !isnan(humidity) && !isnan(pressure)) {
     https.addHeader("Content-Type", "application/json");
     String json = "{\"t\":" + String(temp, 1) + ",\"h\":" + String((int)humidity) + ",\"p\":" + String(pressure, 2) +
-                  ",\"ts\":" + String((long)now) + "}";
+                  ",\"ts\":" + String((long)now);
+    if (gas_sensor != GasSensor::NONE && !isnan(gas_resistance_kohm)) {
+      // Extra fields - the inference server only reads t/h/p by key, so these
+      // are ignored by existing prediction code and simply ride along for the
+      // web dashboard / your own tooling to pick up later.
+      json += ",\"gas\":" + String(gas_resistance_kohm, 1) + ",\"aqi\":" + String(air_quality_index, 0);
+    }
+    json += "}";
 
     int httpCode = https.POST(json); // Changed to POST to append a new node
     LOGF("[firebase] Data POST result: %d\n", httpCode);
@@ -729,6 +824,125 @@ bool fetch_and_sync_firebase() {
   return gotForecast;
 }
 
+// ----------------------------------------------------
+// HOME ASSISTANT / MQTT (optional, independent of Firebase claiming)
+//
+// Publishes readings as JSON to `<MQTT_TOPIC_PREFIX>/<device_id>/state` and
+// publishes retained Home Assistant MQTT-discovery configs so entities show
+// up automatically under one device card in HA - no YAML needed on the HA
+// side. This runs whenever Wi-Fi is up, whether or not the device has ever
+// been claimed in the Firebase web app, so a purely local/no-cloud-account
+// setup works too.
+// ----------------------------------------------------
+#if HA_MQTT_ENABLED
+WiFiClient mqtt_net_client;
+PubSubClient mqtt_client(mqtt_net_client);
+bool mqtt_discovery_sent = false;
+unsigned long last_mqtt_attempt = 0;
+unsigned long last_mqtt_sync = 0;
+
+String mqtt_client_id() { return "meteorologus-" + device_id; }
+String mqtt_state_topic() { return String(MQTT_TOPIC_PREFIX) + "/" + device_id + "/state"; }
+String mqtt_availability_topic() { return String(MQTT_TOPIC_PREFIX) + "/" + device_id + "/availability"; }
+
+void mqtt_publish_discovery_entity(const char* object_id, const char* name,
+                                    const char* value_key, const char* unit,
+                                    const char* device_class, const char* icon) {
+  String topic = String(MQTT_DISCOVERY_PREFIX) + "/sensor/" + device_id + "_" + object_id + "/config";
+
+  DynamicJsonDocument doc(768);
+  doc["name"] = name;
+  doc["unique_id"] = device_id + "_" + object_id;
+  doc["state_topic"] = mqtt_state_topic();
+  doc["availability_topic"] = mqtt_availability_topic();
+  doc["value_template"] = String("{{ value_json.") + value_key + " }}";
+  if (unit && strlen(unit)) doc["unit_of_measurement"] = unit;
+  if (device_class && strlen(device_class)) doc["device_class"] = device_class;
+  if (icon && strlen(icon)) doc["icon"] = icon;
+  doc["state_class"] = "measurement";
+
+  JsonObject dev = doc.createNestedObject("device");
+  JsonArray ids = dev.createNestedArray("identifiers");
+  ids.add("meteorologus_" + device_id);
+  dev["name"] = "Meteorologus " + device_id;
+  dev["model"] = "ESP32-C3 Weather Node";
+  dev["manufacturer"] = "skandapypatriot/meteorologus";
+
+  String payload;
+  serializeJson(doc, payload);
+  mqtt_client.publish(topic.c_str(), payload.c_str(), true); // retained
+}
+
+void mqtt_publish_discovery() {
+  mqtt_publish_discovery_entity("temperature", "Temperature", "temperature", "\u00B0C", "temperature", nullptr);
+  mqtt_publish_discovery_entity("humidity", "Humidity", "humidity", "%", "humidity", nullptr);
+  if (bmp_present) {
+    mqtt_publish_discovery_entity("pressure", "Pressure", "pressure", "hPa", "pressure", nullptr);
+  }
+  if (gas_sensor != GasSensor::NONE) {
+    mqtt_publish_discovery_entity("gas_resistance", "Gas Resistance", "gas_resistance_kohm", "k\u03A9", nullptr, "mdi:gas-cylinder");
+    mqtt_publish_discovery_entity("air_quality", "Air Quality Index", "air_quality_index", nullptr, nullptr, "mdi:weather-hazy");
+  }
+  mqtt_publish_discovery_entity("wifi_signal", "WiFi Signal", "rssi", "dBm", "signal_strength", nullptr);
+  mqtt_publish_discovery_entity("forecast", "Forecast", "forecast", nullptr, nullptr, "mdi:weather-partly-cloudy");
+  mqtt_discovery_sent = true;
+  LOGLN("[mqtt] Home Assistant discovery configs published");
+}
+
+bool mqtt_connect() {
+  if (mqtt_client.connected()) return true;
+  mqtt_client.setServer(MQTT_BROKER_HOST, MQTT_BROKER_PORT);
+  mqtt_client.setBufferSize(768); // discovery payloads exceed PubSubClient's 256B default
+
+  String avail = mqtt_availability_topic();
+  bool ok;
+  if (strlen(MQTT_USER) > 0) {
+    ok = mqtt_client.connect(mqtt_client_id().c_str(), MQTT_USER, MQTT_PASS,
+                              avail.c_str(), 0, true, "offline");
+  } else {
+    ok = mqtt_client.connect(mqtt_client_id().c_str(), avail.c_str(), 0, true, "offline");
+  }
+
+  if (ok) {
+    mqtt_client.publish(avail.c_str(), "online", true);
+    LOGLN("[mqtt] Connected to broker");
+  } else {
+    LOGF("[mqtt] Connect failed, rc=%d\n", mqtt_client.state());
+  }
+  return ok;
+}
+
+void sync_mqtt() {
+  if (!wifi_available) return;
+
+  if (!mqtt_client.connected()) {
+    if (millis() - last_mqtt_attempt < 5000) return; // simple backoff, avoid hammering a down broker
+    last_mqtt_attempt = millis();
+    if (!mqtt_connect()) return;
+    mqtt_discovery_sent = false;
+  }
+  mqtt_client.loop();
+
+  if (!mqtt_discovery_sent) mqtt_publish_discovery();
+  if (isnan(temp) || isnan(humidity)) return; // nothing worth publishing yet
+
+  DynamicJsonDocument doc(384);
+  doc["temperature"] = serialized(String(temp, 1));
+  doc["humidity"] = (int)humidity;
+  if (bmp_present && !isnan(pressure)) doc["pressure"] = serialized(String(pressure, 2));
+  if (gas_sensor != GasSensor::NONE && !isnan(gas_resistance_kohm)) {
+    doc["gas_resistance_kohm"] = serialized(String(gas_resistance_kohm, 1));
+    doc["air_quality_index"] = serialized(String(air_quality_index, 0));
+  }
+  doc["rssi"] = WiFi.RSSI();
+  doc["forecast"] = getWeatherCategory(currentWeatherCode);
+
+  String payload;
+  serializeJson(doc, payload);
+  mqtt_client.publish(mqtt_state_topic().c_str(), payload.c_str(), false);
+}
+#endif // HA_MQTT_ENABLED
+
 void enterDeepSleep() {
   if (!ENABLE_SLEEP) {
     LOGLN("[sleep] Deep sleep disabled for debugging.");
@@ -736,7 +950,9 @@ void enterDeepSleep() {
   }
 
   LOGLN("[sleep] Entering Deep Sleep. Goodnight!");
+#if !HEADLESS_MODE
   u8g2.sendF("c", 0xAE); // Turn OLED off
+#endif
   digitalWrite(POWER_PIN, 0);
   // Enable wake up from deep sleep using the Boot Button (Pin 0) pulling LOW
 pinMode(WAKE_BUTTON_PIN, INPUT_PULLUP);
@@ -886,6 +1102,34 @@ void draw_screen_three() {
     u8g2.sendBuffer();
 }
 
+// Fourth screen - only reached when a BME680 is fitted (see the screen-count
+// logic in loop()). Follows the plain draw_screen_one()/draw_screen_two()
+// style (relies on the outer firstPage()/nextPage() loop in update_gui()).
+void draw_screen_four() {
+    u8g2.setFont(u8g2_font_profont11_tr);
+    u8g2.drawStr(2, 10, "Air Quality");
+    u8g2.drawHLine(0, 14, 128);
+
+    if (!isnan(air_quality_index)) {
+      char aqiBuf[10];
+      sprintf(aqiBuf, "%.0f", air_quality_index);
+      u8g2.setFont(u8g2_font_logisoso22_tr);
+      u8g2.drawStr(5, 48, aqiBuf);
+
+      u8g2.setFont(u8g2_font_profont11_tr);
+      const char* label = (air_quality_index < 150) ? "Good" :
+                           (air_quality_index < 300) ? "Moderate" : "Poor";
+      u8g2.drawStr(80, 32, label);
+
+      char gasBuf[20];
+      sprintf(gasBuf, "%.0f kOhm", gas_resistance_kohm);
+      u8g2.drawStr(80, 48, gasBuf);
+    } else {
+      u8g2.drawStr(10, 35, "Warming up...");
+    }
+    u8g2.drawFrame(0, 16, 128, 48);
+}
+
 // "What to do" screen shown while unpaired: alternates with the QR every
 // SCREEN_DURATION so the display stays stationary between switches.
 void draw_claim_instructions() {
@@ -979,7 +1223,8 @@ void update_gui() {
 
       if (current_screen == 0) draw_screen_one();
       else if (current_screen == 1) draw_screen_two();
-      else draw_screen_three();
+      else if (current_screen == 2) draw_screen_three();
+      else draw_screen_four();
 
   } while (u8g2.nextPage()); 
 }
@@ -1029,9 +1274,11 @@ void setup() {
 
   detect_sensors();
 
+#if !HEADLESS_MODE
   u8g2.begin();
   u8g2.setPowerSave(0);
   u8g2.clearDisplay();          
+#endif
 
   for (uint8_t addr : {0x68, 0x77, 0x3C}) {
     if (i2c_device_ok(addr)) {
@@ -1040,9 +1287,11 @@ void setup() {
       LOGF("[i2c] Scan: 0x%02X (%s) NOT RESPONDING\n", addr, i2c_device_name(addr));
     }
   }
+
+#if !HEADLESS_MODE
   u8g2.clearBuffer();
 
-do {
+  do {
       const int logoX = (128 - 64) / 2;
       const int logoY = 0;
       u8g2.drawXBMP(logoX, logoY, 64, 64, start_logo);
@@ -1055,6 +1304,7 @@ do {
   } while (u8g2.nextPage());
   
   delay(1500); 
+#endif
   // Initial read & sync process before UI starts cycling
   device_id = get_device_id();
   load_wifi_credentials();
@@ -1142,8 +1392,9 @@ void loop() {
     if (!device_claimed) {
       current_screen = (current_screen == 0) ? 1 : 0; // instructions <-> QR
     } else {
+      int last_screen = (gas_sensor != GasSensor::NONE) ? 3 : 2; // +1 screen (Air Quality) with a BME680
       current_screen++;
-      if (current_screen > 2) current_screen = 0;
+      if (current_screen > last_screen) current_screen = 0;
       // Re-run local model whenever the forecast/prediction screen is shown
       if (current_screen == 2) {
         run_local_prediction();
@@ -1155,11 +1406,23 @@ void loop() {
 
   // 3. Update OLED - while unpaired the display is stationary and only
   //    redrawn when the screen switches; paired screens refresh every second.
+  //    Skipped entirely in headless builds (no display wired up).
+#if !HEADLESS_MODE
   if (gui_dirty || (device_claimed && now - lastguiupdate >= OLED_UPDATE)) {
       update_gui();
       lastguiupdate = now;
       gui_dirty = false;
   }
+#endif
+
+  // 3b. Home Assistant / MQTT sync - independent of Firebase claiming, runs
+  //     any time Wi-Fi is up.
+#if HA_MQTT_ENABLED
+  if (now - last_mqtt_sync >= MQTT_SYNC_INTERVAL_MS) {
+    last_mqtt_sync = now;
+    sync_mqtt();
+  }
+#endif
 
   // 4. Firebase Sync (blocking, delay-scheduled)
   if (fb_sync_first || now - last_fb_sync >= FIREBASE_SYNC_INTERVAL) {
@@ -1167,6 +1430,18 @@ void loop() {
       fetch_and_sync_firebase();  
       last_fb_sync = millis();
   }
+
+#if HEADLESS_MODE
+  // No screen to show the claim QR on - print the claim URL to serial
+  // instead so an unclaimed headless node can still be paired.
+  {
+    static unsigned long last_headless_claim_log = 0;
+    if (!device_claimed && now - last_headless_claim_log >= 30000) {
+      last_headless_claim_log = now;
+      LOGF("[provision] Unclaimed - open %s%s to claim.\n", CLAIM_WEB_BASE, device_id.c_str());
+    }
+  }
+#endif
 
   // 5. While unpaired: stay awake, keep retrying WiFi, and poll the cloud for
   //    a claim so a fresh claim is picked up without a reboot.
