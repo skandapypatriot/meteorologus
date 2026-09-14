@@ -1,0 +1,458 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		BB0000000000000000000001 /* MeteorologusApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000001 /* MeteorologusApp.swift */; };
+		BB0000000000000000000002 /* AppRoot.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000002 /* AppRoot.swift */; };
+		BB0000000000000000000003 /* DeviceReading.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000003 /* DeviceReading.swift */; };
+		BB0000000000000000000004 /* OwnedDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000004 /* OwnedDevice.swift */; };
+		BB0000000000000000000005 /* WeatherCode.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000005 /* WeatherCode.swift */; };
+		BB0000000000000000000006 /* ThemeEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000006 /* ThemeEngine.swift */; };
+		BB0000000000000000000007 /* FirebaseConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000007 /* FirebaseConfig.swift */; };
+		BB0000000000000000000008 /* AuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000008 /* AuthService.swift */; };
+		BB0000000000000000000009 /* DatabaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000009 /* DatabaseService.swift */; };
+		BB0000000000000000000010 /* ClaimService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000010 /* ClaimService.swift */; };
+		BB0000000000000000000011 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000011 /* KeychainStore.swift */; };
+		BB0000000000000000000012 /* AuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000012 /* AuthViewModel.swift */; };
+		BB0000000000000000000013 /* WeatherViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000013 /* WeatherViewModel.swift */; };
+		BB0000000000000000000014 /* ThemeViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000014 /* ThemeViewModel.swift */; };
+		BB0000000000000000000015 /* AuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000015 /* AuthView.swift */; };
+		BB0000000000000000000016 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000016 /* DashboardView.swift */; };
+		BB0000000000000000000017 /* CurrentSlideView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000017 /* CurrentSlideView.swift */; };
+		BB0000000000000000000018 /* ForecastSlideView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000018 /* ForecastSlideView.swift */; };
+		BB0000000000000000000019 /* DeviceSelectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000019 /* DeviceSelectorView.swift */; };
+		BB0000000000000000000020 /* WeatherVisualView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000020 /* WeatherVisualView.swift */; };
+		BB0000000000000000000021 /* SparklineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000021 /* SparklineView.swift */; };
+		BB0000000000000000000022 /* PageIndicatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000022 /* PageIndicatorView.swift */; };
+		BB0000000000000000000023 /* ClaimView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000023 /* ClaimView.swift */; };
+		BB0000000000000000000024 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000024 /* QRScannerView.swift */; };
+		BB0000000000000000000025 /* GlassCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000025 /* GlassCard.swift */; };
+		BB0000000000000000000026 /* HeaderIconButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000026 /* HeaderIconButton.swift */; };
+		BB00000000000000000000FF /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AB00000000000000000000FF /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		AB0000000000000000000001 /* MeteorologusApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeteorologusApp.swift; sourceTree = "<group>"; };
+		AB0000000000000000000002 /* AppRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRoot.swift; sourceTree = "<group>"; };
+		AB0000000000000000000003 /* DeviceReading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceReading.swift; sourceTree = "<group>"; };
+		AB0000000000000000000004 /* OwnedDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OwnedDevice.swift; sourceTree = "<group>"; };
+		AB0000000000000000000005 /* WeatherCode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherCode.swift; sourceTree = "<group>"; };
+		AB0000000000000000000006 /* ThemeEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeEngine.swift; sourceTree = "<group>"; };
+		AB0000000000000000000007 /* FirebaseConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirebaseConfig.swift; sourceTree = "<group>"; };
+		AB0000000000000000000008 /* AuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthService.swift; sourceTree = "<group>"; };
+		AB0000000000000000000009 /* DatabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseService.swift; sourceTree = "<group>"; };
+		AB0000000000000000000010 /* ClaimService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaimService.swift; sourceTree = "<group>"; };
+		AB0000000000000000000011 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		AB0000000000000000000012 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
+		AB0000000000000000000013 /* WeatherViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherViewModel.swift; sourceTree = "<group>"; };
+		AB0000000000000000000014 /* ThemeViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeViewModel.swift; sourceTree = "<group>"; };
+		AB0000000000000000000015 /* AuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthView.swift; sourceTree = "<group>"; };
+		AB0000000000000000000016 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
+		AB0000000000000000000017 /* CurrentSlideView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrentSlideView.swift; sourceTree = "<group>"; };
+		AB0000000000000000000018 /* ForecastSlideView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForecastSlideView.swift; sourceTree = "<group>"; };
+		AB0000000000000000000019 /* DeviceSelectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSelectorView.swift; sourceTree = "<group>"; };
+		AB0000000000000000000020 /* WeatherVisualView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherVisualView.swift; sourceTree = "<group>"; };
+		AB0000000000000000000021 /* SparklineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SparklineView.swift; sourceTree = "<group>"; };
+		AB0000000000000000000022 /* PageIndicatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageIndicatorView.swift; sourceTree = "<group>"; };
+		AB0000000000000000000023 /* ClaimView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaimView.swift; sourceTree = "<group>"; };
+		AB0000000000000000000024 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
+		AB0000000000000000000025 /* GlassCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassCard.swift; sourceTree = "<group>"; };
+		AB0000000000000000000026 /* HeaderIconButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeaderIconButton.swift; sourceTree = "<group>"; };
+		AB00000000000000000000FF /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AB00000000000000000000FE /* Meteorologus.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Meteorologus.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		AA0000000000000000000000 /* Meteorologus */ = {
+			isa = PBXGroup;
+			children = (
+				AB0000000000000000000001,
+				AB0000000000000000000002,
+				AA0000000000000000000001,
+				AA0000000000000000000002,
+				AA0000000000000000000003,
+				AA0000000000000000000004,
+				AA0000000000000000000005,
+				AA0000000000000000000006,
+				AB00000000000000000000FF,
+				AA000000000000000000000A,
+			);
+			path = Meteorologus;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000001 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				AB0000000000000000000003,
+				AB0000000000000000000004,
+				AB0000000000000000000005,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000002 /* Theme */ = {
+			isa = PBXGroup;
+			children = (
+				AB0000000000000000000006,
+			);
+			path = Theme;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000003 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				AB0000000000000000000007,
+				AB0000000000000000000008,
+				AB0000000000000000000009,
+				AB0000000000000000000010,
+				AB0000000000000000000011,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000004 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				AB0000000000000000000012,
+				AB0000000000000000000013,
+				AB0000000000000000000014,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000005 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000007,
+				AA0000000000000000000008,
+				AA0000000000000000000009,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000006 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				AB0000000000000000000025,
+				AB0000000000000000000026,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000007 /* Auth */ = {
+			isa = PBXGroup;
+			children = (
+				AB0000000000000000000015,
+			);
+			path = Auth;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000008 /* Dashboard */ = {
+			isa = PBXGroup;
+			children = (
+				AB0000000000000000000016,
+				AB0000000000000000000017,
+				AB0000000000000000000018,
+				AB0000000000000000000019,
+				AB0000000000000000000020,
+				AB0000000000000000000021,
+				AB0000000000000000000022,
+			);
+			path = Dashboard;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000009 /* Claim */ = {
+			isa = PBXGroup;
+			children = (
+				AB0000000000000000000023,
+				AB0000000000000000000024,
+			);
+			path = Claim;
+			sourceTree = "<group>";
+		};
+		AA000000000000000000000A /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AB00000000000000000000FE,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		TG0000000000000000000001 /* Meteorologus */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CL0000000000000000000002 /* Build configuration list for PBXNativeTarget "Meteorologus" */;
+			buildPhases = (
+				SP0000000000000000000001 /* Sources */,
+				RP0000000000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Meteorologus;
+			packageProductDependencies = (
+			);
+			productName = Meteorologus;
+			productReference = AB00000000000000000000FE /* Meteorologus.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		PJ0000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					TG0000000000000000000001 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+				};
+			};
+			buildConfigurationList = CL0000000000000000000001 /* Build configuration list for PBXProject "Meteorologus" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = AA0000000000000000000000 /* Meteorologus */;
+			packageReferences = (
+			);
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				TG0000000000000000000001 /* Meteorologus */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		RP0000000000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BB00000000000000000000FF /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		SP0000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BB0000000000000000000001 /* MeteorologusApp.swift in Sources */,
+				BB0000000000000000000002 /* AppRoot.swift in Sources */,
+				BB0000000000000000000003 /* DeviceReading.swift in Sources */,
+				BB0000000000000000000004 /* OwnedDevice.swift in Sources */,
+				BB0000000000000000000005 /* WeatherCode.swift in Sources */,
+				BB0000000000000000000006 /* ThemeEngine.swift in Sources */,
+				BB0000000000000000000007 /* FirebaseConfig.swift in Sources */,
+				BB0000000000000000000008 /* AuthService.swift in Sources */,
+				BB0000000000000000000009 /* DatabaseService.swift in Sources */,
+				BB0000000000000000000010 /* ClaimService.swift in Sources */,
+				BB0000000000000000000011 /* KeychainStore.swift in Sources */,
+				BB0000000000000000000012 /* AuthViewModel.swift in Sources */,
+				BB0000000000000000000013 /* WeatherViewModel.swift in Sources */,
+				BB0000000000000000000014 /* ThemeViewModel.swift in Sources */,
+				BB0000000000000000000015 /* AuthView.swift in Sources */,
+				BB0000000000000000000016 /* DashboardView.swift in Sources */,
+				BB0000000000000000000017 /* CurrentSlideView.swift in Sources */,
+				BB0000000000000000000018 /* ForecastSlideView.swift in Sources */,
+				BB0000000000000000000019 /* DeviceSelectorView.swift in Sources */,
+				BB0000000000000000000020 /* WeatherVisualView.swift in Sources */,
+				BB0000000000000000000021 /* SparklineView.swift in Sources */,
+				BB0000000000000000000022 /* PageIndicatorView.swift in Sources */,
+				BB0000000000000000000023 /* ClaimView.swift in Sources */,
+				BB0000000000000000000024 /* QRScannerView.swift in Sources */,
+				BB0000000000000000000025 /* GlassCard.swift in Sources */,
+				BB0000000000000000000026 /* HeaderIconButton.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		CF0000000000000000000011 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		CF0000000000000000000012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		CF0000000000000000000021 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Meteorologus/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.meteorologus.iosApp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		CF0000000000000000000022 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Meteorologus/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.meteorologus.iosApp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		CL0000000000000000000001 /* Build configuration list for PBXProject "Meteorologus" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CF0000000000000000000011 /* Debug */,
+				CF0000000000000000000012 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CL0000000000000000000002 /* Build configuration list for PBXNativeTarget "Meteorologus" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CF0000000000000000000021 /* Debug */,
+				CF0000000000000000000022 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = PJ0000000000000000000001 /* Project object */;
+}
