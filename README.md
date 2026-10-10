@@ -141,7 +141,7 @@ flowchart LR
 
 > ✅ **Exit criteria:** a device you can hand to someone else with only a QR code and no instructions.
 
-### Stage 5 — Custom PCB *(coming soon)*
+### Stage 5 — Custom PCB *MAYBE COMING TODAY 10/10/2026!!!*
 
 A dedicated PCB is planned to replace the perfboard stage entirely:
 
