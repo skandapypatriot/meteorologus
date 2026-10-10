@@ -34,7 +34,7 @@ It is designed as a **complete, learnable, end-to-end IoT product**: sensor → 
   - [Stage 2 — Perfboard](#stage-2--perfboard)
   - [Stage 3 — Float / Freeform Soldering](#stage-3--float--freeform-soldering)
   - [Stage 4 — Final Soldered Assembly](#stage-4--final-soldered-assembly)
-  - [Stage 5 — Custom PCB *(coming soon)*](#stage-5--custom-pcb-coming-soon)
+  - [Stage 5 — Custom PCB](#stage-5--custom-pcb-coming-soon)
 - [Repository Map](#repository-map)
 - [Quick Start](#quick-start)
 - [Using the Product](#using-the-product)
@@ -141,7 +141,7 @@ flowchart LR
 
 > ✅ **Exit criteria:** a device you can hand to someone else with only a QR code and no instructions.
 
-### Stage 5 — Custom PCB *MAYBE COMING TODAY 10/10/2026!!!*
+### Stage 5 — Custom PCB *RELEASED 10/10/2026!!!*
 
 A dedicated PCB is planned to replace the perfboard stage entirely:
 
