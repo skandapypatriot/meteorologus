@@ -34,7 +34,7 @@ It is designed as a **complete, learnable, end-to-end IoT product**: sensor → 
   - [Stage 2 — Perfboard](#stage-2--perfboard)
   - [Stage 3 — Float / Freeform Soldering](#stage-3--float--freeform-soldering)
   - [Stage 4 — Final Soldered Assembly](#stage-4--final-soldered-assembly)
-  - [Stage 5 — Custom PCB](#stage-5--custom-pcb-coming-soon)
+  - [Stage 5 — Custom PCB](#stage-5--custom-pcb-released-10102026)
 - [Repository Map](#repository-map)
 - [Quick Start](#quick-start)
 - [Using the Product](#using-the-product)
