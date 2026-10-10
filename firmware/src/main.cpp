@@ -59,6 +59,24 @@
   #define HEADLESS_MODE 0
 #endif
 
+// --- OLED DRIVER ---
+// Works out of the box: by default (OLED_AUTO) the firmware finds the OLED on
+// 0x3C/0x3D at boot and tells an SH1106 from an SSD1306/SSD1315 by reading the
+// controller's status register. If the read is unclear it falls back to SSD1306.
+// Only force a driver if you have a different controller or auto picks wrong:
+//   -DOLED_DRIVER=OLED_SSD1306 | OLED_SSD1306_VCOMH0 | OLED_SSD1309 | OLED_SSD1305 | OLED_SH1106
+// -DOLED_I2C_ADDR=0x3D forces the address instead of auto-finding it.
+// 128x64 panels only: the UI layout is built for that size.
+#define OLED_AUTO           1   // (values start at 1 on purpose: a typo'd name
+#define OLED_SSD1306        2   //  expands to 0 and hits the #error below)
+#define OLED_SSD1306_VCOMH0 3
+#define OLED_SSD1309        4
+#define OLED_SSD1305        5
+#define OLED_SH1106         6
+#ifndef OLED_DRIVER
+  #define OLED_DRIVER OLED_AUTO
+#endif
+
 // --- HOME ASSISTANT / MQTT ---
 // Set to 0 to compile MQTT out entirely. This is fully independent of the
 // Firebase claim flow above - a node can publish to MQTT whether or not it
@@ -78,8 +96,8 @@
 // Pin Definitions
 #define DHTPIN 7
 #define DHTTYPE DHT11
-#define I2C_SDA 8
-#define I2C_SCL 9
+#define I2C_SDA 4   // was 8: GPIO8/9 are strapping pins (GPIO9 = BOOT button)
+#define I2C_SCL 5
 #define WAKE_BUTTON_PIN 3
 
 // Timing & Intervals
@@ -128,7 +146,33 @@ Adafruit_BME280 bme;
 Adafruit_BMP280 bmp280;
 Adafruit_AHTX0 aht;
 Adafruit_BME680 bme680;
-U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
+#ifdef OLED_I2C_ADDR
+uint8_t oled_addr = OLED_I2C_ADDR;
+#else
+uint8_t oled_addr = 0x3C;     // auto-detected at boot (0x3C or 0x3D)
+#endif
+#if OLED_DRIVER == OLED_AUTO
+U8G2_SSD1306_128X64_NONAME_1_HW_I2C oled_ssd1306(U8G2_R0, U8X8_PIN_NONE);
+U8G2_SH1106_128X64_NONAME_1_HW_I2C  oled_sh1106(U8G2_R0, U8X8_PIN_NONE);
+U8G2 *u8g2p = &oled_ssd1306;  // swapped in oled_autodetect()
+#else
+  #if   OLED_DRIVER == OLED_SSD1306
+U8G2_SSD1306_128X64_NONAME_1_HW_I2C oled_forced(U8G2_R0, U8X8_PIN_NONE);
+  #elif OLED_DRIVER == OLED_SSD1306_VCOMH0
+U8G2_SSD1306_128X64_VCOMH0_1_HW_I2C oled_forced(U8G2_R0, U8X8_PIN_NONE);
+  #elif OLED_DRIVER == OLED_SSD1309
+U8G2_SSD1309_128X64_NONAME2_1_HW_I2C oled_forced(U8G2_R0, U8X8_PIN_NONE);
+  #elif OLED_DRIVER == OLED_SSD1305
+U8G2_SSD1305_128X64_ADAFRUIT_1_HW_I2C oled_forced(U8G2_R0, U8X8_PIN_NONE);
+  #elif OLED_DRIVER == OLED_SH1106
+U8G2_SH1106_128X64_NONAME_1_HW_I2C oled_forced(U8G2_R0, U8X8_PIN_NONE);
+  #else
+    #error "Unknown OLED_DRIVER - see the OLED DRIVER block near the top of main.cpp"
+  #endif
+U8G2 *u8g2p = &oled_forced;
+#endif
+// All display code below uses `u8g2.` - this routes it to whichever driver is active.
+#define u8g2 (*u8g2p)
 
 enum class HumiditySensor { NONE, DHT11, AHT20, BME280, BME680 };
 enum class PressureSensor { NONE, BMP180, BMP280, BME280, BME680 };
@@ -148,8 +192,10 @@ bool r_state = false;   // true = RTC present & running (gives valid time)
 const char* i2c_device_name(uint8_t addr) {
   switch (addr) {
     case 0x68: return "DS3231 RTC";
-    case 0x77: return "BMP180";
-    case 0x3C: return "SSD1306 OLED";
+    case 0x76: return "BMP280/BME280";
+    case 0x77: return "BMP180/BMP280/BME280";
+    case 0x3C:
+    case 0x3D: return "OLED display";
     default:   return "Unknown";
   }
 }
@@ -158,6 +204,40 @@ bool i2c_device_ok(uint8_t addr) {
   Wire.beginTransmission(addr);
   return Wire.endTransmission() == 0;
 }
+
+#if !HEADLESS_MODE
+// Reads the OLED controller's status register (low nibble identifies the chip:
+// 0x6/0x3 = SSD1306, 0x8 = SH1106, 0x7/0xF = SH1107). First read is unreliable
+// on some modules, so it is done twice and only the second is used. -1 = no answer.
+static int oled_read_status(uint8_t addr) {
+  int v = -1;
+  for (int attempt = 0; attempt < 2; attempt++) {
+    Wire.beginTransmission(addr);
+    Wire.write((uint8_t)0x00);
+    if (Wire.endTransmission(false) != 0) return -1;
+    if (Wire.requestFrom((int)addr, 1) != 1) return -1;
+    v = Wire.read() & 0x0F;
+  }
+  return v;
+}
+
+static void oled_autodetect() {
+#ifndef OLED_I2C_ADDR
+  if (i2c_device_ok(0x3C))      oled_addr = 0x3C;
+  else if (i2c_device_ok(0x3D)) oled_addr = 0x3D;
+#endif
+#if OLED_DRIVER == OLED_AUTO
+  int st = oled_read_status(oled_addr);
+  if (st == 0x8) {
+    u8g2p = &oled_sh1106;
+    LOGF("[oled] 0x%02X: SH1106 detected\n", oled_addr);
+  } else {
+    u8g2p = &oled_ssd1306;
+    LOGF("[oled] 0x%02X: using SSD1306 driver (status nibble %d)\n", oled_addr, st);
+  }
+#endif
+}
+#endif
 
 // ----------------------------------------------------
 // SHARED TIME ACCESS
@@ -951,7 +1031,7 @@ void enterDeepSleep() {
 
   LOGLN("[sleep] Entering Deep Sleep. Goodnight!");
 #if !HEADLESS_MODE
-  u8g2.sendF("c", 0xAE); // Turn OLED off
+  u8g2.setPowerSave(1); // Turn OLED off (driver-agnostic)
 #endif
   digitalWrite(POWER_PIN, 0);
   // Enable wake up from deep sleep using the Boot Button (Pin 0) pulling LOW
@@ -1275,12 +1355,14 @@ void setup() {
   detect_sensors();
 
 #if !HEADLESS_MODE
+  oled_autodetect();
+  u8g2.setI2CAddress(oled_addr << 1);   // U8g2 wants the 8-bit form
   u8g2.begin();
   u8g2.setPowerSave(0);
   u8g2.clearDisplay();          
 #endif
 
-  for (uint8_t addr : {0x68, 0x77, 0x3C}) {
+  for (uint8_t addr : {(uint8_t)0x68, (uint8_t)0x76, (uint8_t)0x77, oled_addr}) {
     if (i2c_device_ok(addr)) {
       LOGF("[i2c] Scan: 0x%02X (%s) OK\n", addr, i2c_device_name(addr));
     } else {

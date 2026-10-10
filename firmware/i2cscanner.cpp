@@ -1,8 +1,8 @@
 #include <Wire.h>
 #include <Arduino.h>
 
-#define I2C_SDA 8
-#define I2C_SCL 9
+#define I2C_SDA 4
+#define I2C_SCL 5
 #define I2C_CLOCK 100000
 
 void scanAddress(uint8_t addr);
@@ -18,8 +18,8 @@ void setup() {
   Serial.printf("SDA=%d SCL=%d clock=%dHz\r\n", I2C_SDA, I2C_SCL, I2C_CLOCK);
 
   if (!Wire.begin(I2C_SDA, I2C_SCL, I2C_CLOCK)) {
-    Serial.println("FATAL: Wire.begin() failed to claim pins 8/9");
-    Serial.println("Check that nothing else (e.g. WS2812/NeoPixel on pin 8)");
+    Serial.println("FATAL: Wire.begin() failed to claim pins 4/5");
+    Serial.println("Check that nothing else (e.g. anything else on pins 4/5)");
     Serial.println("is driving those pins.");
   }
 

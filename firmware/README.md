@@ -40,7 +40,7 @@ Everything physical lives in this section: the parts you need, how they connect,
 | DHT11 *(or AHT20 / BME280 / BME680)* | Temperature + humidity | Auto-detected at boot, priority: BME680 > BME280 > AHT20 > DHT11 |
 | BMP180 *(or BMP280 / BME280 / BME680)* | Barometric pressure | Auto-detected, addresses 0x76/0x77 scanned |
 | BME680 *(optional)* | Adds air quality (gas resistance) on top of temp/humidity/pressure | Same I²C bus, no extra pins - chip ID 0x61 at 0x76/0x77 |
-| SSD1306 0.96" OLED 128×64 | Display (U8g2, hardware I²C) | Address 0x3C |
+| 128×64 I²C OLED (SSD1306/SSD1315, SSD1309, SSD1305, SH1106) | Display (U8g2, hardware I²C) | Address 0x3C or 0x3D, controller auto-detected |
 | DS3231 RTC *(optional)* | Timekeeping through sleep | Address 0x68; **always powered** — never behind the switch |
 | **BC547** (NPN, TO-92) | Peripheral power switch | Cuts OLED + sensors completely during sleep |
 | 1 kΩ resistor | Base resistor for BC547 | GPIO 10 → base |
@@ -54,12 +54,12 @@ Everything physical lives in this section: the parts you need, how they connect,
 | Signal | GPIO | Connected to |
 | :--- | :--- | :--- |
 | DHT11 data | **7** | DHT11 out (4.7k pull-up recommended) |
-| I²C SDA | **8** | OLED, RTC, pressure sensor, AHT20 |
-| I²C SCL | **9** | OLED, RTC, pressure sensor, AHT20 |
+| I²C SDA | **4** | OLED, RTC, pressure sensor, AHT20 |
+| I²C SCL | **5** | OLED, RTC, pressure sensor, AHT20 |
 | Wake button | **3** | Button to GND (GPIO-low wakeup) |
-| **BC547 base** | **21** | Via 1 kΩ resistor (see below) |
+| **BC547 base** | **10** | Via 1 kΩ resistor (see below) |
 
-I²C addresses probed at boot: `0x68` (DS3231), `0x77` (BMP180/BMP280/BME280), `0x3C` (SSD1306), plus `0x38` (AHT20) and `0x76` (BMP280/BME280 alt).
+I²C addresses probed at boot: `0x68` (DS3231), `0x77` (BMP180/BMP280/BME280), `0x3C` (OLED, or `0x3D`), plus `0x38` (AHT20) and `0x76` (BMP280/BME280 alt).
 
 ### Peripheral Power Switch (BC547)
 
@@ -150,6 +150,8 @@ Set in `platformio.ini` under `build_flags`:
 | `-DLOGGING_ENABLED=1` | `1` | Serial logging; `0` compiles all logs out |
 | `-DRTC_SUPPORT=1` | `1` | DS3231 support; `0` removes RTC code entirely |
 | `-DHEADLESS_MODE=0` | `0` | `1` = no OLED wired up at all: skips display init/draw entirely. Claim URL for an unclaimed node prints to serial every 30s instead of showing a QR. |
+| `-DOLED_DRIVER=OLED_AUTO` | `OLED_AUTO` | Default: auto-detects SSD1306/SSD1315 vs SH1106 and the 0x3C/0x3D address at boot, no config needed. Force one only if needed: `OLED_SSD1306`, `OLED_SSD1306_VCOMH0`, `OLED_SSD1309`, `OLED_SSD1305`, `OLED_SH1106`. 128×64 panels only. |
+| `-DOLED_I2C_ADDR=0x3C` | auto | Force the OLED address instead of auto-finding it |
 | `-DHA_MQTT_ENABLED=1` | `1` | `0` compiles MQTT out. When on, readings publish to a broker with Home Assistant auto-discovery - see [Home Assistant / MQTT](#home-assistant--mqtt) below. |
 | `-DARDUINO_LOOP_STACK_SIZE=65536` | — | Larger loop stack for model inference |
 
