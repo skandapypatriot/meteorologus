@@ -51,13 +51,15 @@ It is designed as a **complete, learnable, end-to-end IoT product**: sensor → 
 - 📲 **Zero-config pairing** — a fresh node displays its own QR code; scan, sign in, tap *Claim*, done. No flashing, no serial console, no configuration files for end users.
 - 📊 **Real dashboard, real history** — live temperature/humidity/pressure, a temperature sparkline and Now/Day-1/Day-2/Day-3 forecast badges per device.
 - 🏠 **Multi-node by design** — every device owns its data under its MAC address; one account can monitor many rooms.
+- 🏡 **Local-first option** — optional **Home Assistant / MQTT** auto-discovery publishes every reading to your own broker with no YAML, fully independent of the cloud, so a node works even with no account.
+- 🧩 **Headless variant** — build with `HEADLESS_MODE=1` for a sensor-only node with no OLED; the claim URL is printed to the serial log instead of shown as a QR code.
 
 **As a learning project**
 
-- Covers the **full IoT stack**: I²C/one-wire sensing, NVS storage, TLS HTTP, NTP/RTC timekeeping, deep sleep, REST-style cloud sync, security rules, email/password auth, and ML feature engineering (lag features + seasonal encodings).
+- Covers the **full IoT stack**: I²C/one-wire sensing, NVS storage, TLS HTTP, MQTT with Home Assistant auto-discovery, NTP/RTC timekeeping, deep sleep, REST-style cloud sync, security rules, email/password auth, and ML feature engineering (lag features + seasonal encodings).
 - Demonstrates **practical TinyML**: a scikit-learn KNN exported to plain C (`modeltoc.py`) running inference on a microcontroller.
 - Follows a **realistic hardware bring-up path** — breadboard → perfboard → soldered builds → PCB — exactly how products are actually prototyped.
-- Uses only **hobbyist-friendly parts** (ESP32-C3, BME280-class breakouts, SSD1306 OLED, TP4056 charger).
+- Uses only **hobbyist-friendly parts** — ESP32-C3, BME280-class breakouts, and SSD1306/SH1106 OLEDs — with either a TP4056 charger (breadboard builds) or an AXP2101 PMIC (custom PCB).
 
 ---
 
@@ -96,7 +98,7 @@ flowchart LR
     A["Stage 1<br/>Breadboard<br/>(no soldering)"] --> B["Stage 2<br/>Perfboard<br/>(hand-wired)"]
     B --> C["Stage 3<br/>Float / freeform<br/>soldering"]
     C --> D["Stage 4<br/>Final soldered<br/>assembly"]
-    D --> E["Stage 5<br/>Custom PCB<br/>🚧 coming soon"]
+    D --> E["Stage 5<br/>Custom PCB<br/>✅ released"]
 ```
 
 ### Stage 1 — Breadboard
@@ -104,7 +106,7 @@ flowchart LR
 **Goal:** prove the electronics and firmware before any permanent connection.
 
 - Place the ESP32-C3, sensor breakouts and OLED on a full-size breadboard.
-- Wire I²C (SDA → GPIO 8, SCL → GPIO 9) shared by the OLED, RTC and pressure sensor; put the DHT11 data pin on GPIO 7.
+- Wire I²C (SDA → GPIO 4, SCL → GPIO 5) shared by the OLED, RTC and pressure sensor; put the DHT11 data pin on GPIO 7. (GPIO 8/9 are avoided — they are strapping pins, and GPIO 9 doubles as the BOOT button.)
 - Flash the firmware from [`firmware/`](firmware/) and confirm sensor auto-detection in the serial log.
 - Iterate freely: swap sensors, change pins, test deep-sleep current with a multimeter.
 
@@ -115,7 +117,7 @@ flowchart LR
 **Goal:** a semi-permanent build that survives being picked up and moved.
 
 - Transfer the proven layout onto perfboard (protoboard); sockets/headers let you still remove the MCU.
-- Point-to-point solder the rails: 3V3, GND, I²C bus and the switched peripheral rail (a BC547 on GPIO 10 cuts OLED + sensor power completely during sleep).
+- Point-to-point solder the rails: 3V3, GND, I²C bus and the switched peripheral rail (a P-MOSFET load switch driven by GPIO 10 cuts OLED + sensor power completely during sleep).
 - Add the power section: 18650 holder → TP4056 (Type-C, with protection) → 3V3 regulator, plus a switch.
 - Keep the wake button (GPIO 3) and leave one spare header row for future add-ons.
 
@@ -141,13 +143,13 @@ flowchart LR
 
 > ✅ **Exit criteria:** a device you can hand to someone else with only a QR code and no instructions.
 
-### Stage 5 — Custom PCB *RELEASED 10/10/2026!!!*
+### Stage 5 — Custom PCB *RELEASED 10/10/2026*
 
-A dedicated PCB is planned to replace the perfboard stage entirely:
+A dedicated PCB replaces the perfboard stage entirely:
 
-- Single-board integration: ESP32-C3 module, sensor footprints (BME280 + BMP280 alternatives), OLED connector, TP4056 charging, LiPo pad, boot/wake buttons.
+- Single-board integration: ESP32-C3 module, sensor footprints (BME280 + BMP280 alternatives), OLED connector, AXP2101 PMIC with DW01 + 8205 battery protection, LiPo pad, boot/wake buttons.
 - Proper power tree with a load switch driven by GPIO 10, and test points for current profiling.
-- Design files, schematics and ordering links will land in this repository — watch the [`firmware/`](firmware/) and root README for updates.
+- Design files and schematics are in [`metereologus pcb files/`](metereologus%20pcb%20files/).
 
 ---
 
@@ -155,9 +157,11 @@ A dedicated PCB is planned to replace the perfboard stage entirely:
 
 | Folder | What lives there | Documentation |
 | :--- | :--- | :--- |
-| [`firmware/`](firmware/) | ESP32-C3 PlatformIO project — sensors, OLED UI, deep sleep, on-device KNN, cloud sync | [firmware/README.md](firmware/README.md) |
+| [`firmware/`](firmware/) | ESP32-C3 PlatformIO project — sensors, OLED UI, deep sleep, on-device KNN, cloud sync, MQTT / Home Assistant | [firmware/README.md](firmware/README.md) |
 | [`inferenceserver/`](inferenceserver/) | Python worker — polls Firebase, runs scikit-learn models, patches forecasts | [inferenceserver/README.md](inferenceserver/README.md) |
 | [`website/`](website/) | Firebase-hosted dashboard — auth, QR device claiming, live device cards | [website/README.md](website/README.md) |
+| [`android_app/`](android_app/) | Flutter companion app (Android/iOS/web/desktop) — auth, QR claiming, live device cards | [android_app/README.md](android_app/README.md) |
+| [`metereologus pcb files/`](metereologus%20pcb%20files/) | EasyEDA Pro PCB project + fabrication schematic (PDF) | — |
 
 ---
 
@@ -213,7 +217,7 @@ Full walkthroughs live in [`website/README.md`](website/README.md); the short ve
 
 | Document | Contents |
 | :--- | :--- |
-| [firmware/README.md](firmware/README.md) | Wiring & pinout, build flags, screens, provisioning, sleep tuning, troubleshooting |
+| [firmware/README.md](firmware/README.md) | Wiring & pinout, build flags, screens, provisioning, Home Assistant / MQTT, sleep tuning, troubleshooting |
 | [inferenceserver/README.md](inferenceserver/README.md) | Prediction pipeline, health endpoint, model retraining/export, Render deployment |
 | [website/README.md](website/README.md) | Firebase setup, security rules, deploy steps, account & claim walkthroughs |
 
