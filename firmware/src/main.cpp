@@ -95,7 +95,7 @@
 
 // Pin Definitions
 #define DHTPIN 7
-#define DHTTYPE DHT11
+#define DHTTYPE DHT11 
 #define I2C_SDA 4   // was 8: GPIO8/9 are strapping pins (GPIO9 = BOOT button)
 #define I2C_SCL 5
 #define WAKE_BUTTON_PIN 3
@@ -111,8 +111,8 @@
 // whatever is saved via the Wi-Fi Setup Portal (see README). Never commit
 // real credentials here - anything in git history is effectively public,
 // even after being replaced in a later commit.
-#define WIFI_SSID "YourWiFiName"
-#define WIFI_PASS "YourWiFiPassword"
+#define WIFI_SSID "test1"
+#define WIFI_PASS "1234567890"
 #define WIFI_PORTAL_TIMEOUT 0
 #define WIFI_OFFLINE_LIMIT_SECONDS 864000UL // 10 days
 #define FIREBASE_BASE_URL "https://weather-monitor-f4248-default-rtdb.asia-southeast1.firebasedatabase.app"
@@ -643,7 +643,7 @@ String get_device_id() {
   return mac;
 }
 
-String get_stored_device_key() {
+String  get_stored_device_key() {
   Preferences prefs;
   prefs.begin("auth", true);
   String key = prefs.getString("device_key", "");
@@ -1388,6 +1388,10 @@ void setup() {
   delay(1500); 
 #endif
   // Initial read & sync process before UI starts cycling
+  esp_wifi_set_ps(WIFI_PS_NONE);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin();   
+  delay(500);
   device_id = get_device_id();
   load_wifi_credentials();
   device_key = get_stored_device_key();
