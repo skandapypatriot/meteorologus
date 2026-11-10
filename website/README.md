@@ -73,7 +73,7 @@ Defined in [`database.rules.json`](database.rules.json):
 
 | Path | Read | Write | Why |
 | :--- | :--- | :--- | :--- |
-| `/claimed_devices/<id>` | Public | Signed-in users | The device itself fetches its claim token over plain HTTPS |
+| `/claimed_devices/<id>` | Public | Signed-in users — only if the device is unclaimed, or the writer already owns it | The device fetches its claim token over plain HTTPS; only the claiming owner (or a fresh claim by anyone) may modify it afterwards |
 | `/devices/<id>` | Public | Only if claimed | Sensor data is non-sensitive; writes require a completed claim |
 | `/users/<uid>` | Owner only | Owner only | Each account sees only its own device list |
 
@@ -107,6 +107,22 @@ One-time pairing between a physical node and your account:
 4. Click **Claim device**. You'll see *"Done! The device will claim itself when it connects."*
 5. Within ~30 seconds the node polls the cloud, stores its key, and starts syncing — the page flips to **Device claimed!**
 
+A node that is already claimed shows *"This device is already claimed."* to everyone except its owner — another account cannot take it over.
+
+### Unpairing a Device
+
+Removes the pairing between a node and your account, Owner-only:
+
+1. Open the dashboard and find the device's card; click **Unpair this device**.
+2. Confirm. Three things are deleted, in that order: the sensor history under `/devices/<MAC>`, the claim token under `/claimed_devices/<MAC>`, and the entry under your `/users/<uid>/owned_devices`.
+3. On its next wake the node notices the missing claim, **erases its stored claim key and Wi-Fi credentials**, and returns to the QR pairing flow — as good as factory-fresh.
+
+> The node checks its claim status once per wake-up, so after unpairing it can take up to one sleep cycle (1.5 h) before it visibly resets. While unpairing keeps it powered near Wi-Fi is fine; on its next connection it shows **NOT PAIRED YET** again.
+
+> The Flutter companion app ([`android_app/`](../android_app/README.md)) mirrors this action via the header **Unpair node** (`link_off`) button; both call the same set of database operations in the same order.
+
+Unpairing requires only that the device connects before the node side takes effect; history for unpaired nodes is gone immediately.
+
 ### Reading the Dashboard
 
 Each claimed device gets a card showing:
@@ -128,4 +144,6 @@ Each claimed device gets a card showing:
 | Claim button does nothing | Ensure the URL contains a valid 12-hex-char MAC (open the link via QR) |
 | "This device is already claimed" | Node is paired to another account; erase NVS on the device to re-pair |
 | Dashboard shows no data | Device may be asleep — press its wake button or wait for the next timer wake |
+| Unpair button fails | Rules not current — redeploy: `firebase deploy --only database` |
+| Device didn't reset after unpairing | It checks once per wake (1.5 h cycle) — wait for the next timer wake |
 | Permission denied reading devices | Redeploy rules: `firebase deploy --only database` |

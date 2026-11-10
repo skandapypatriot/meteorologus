@@ -1,5 +1,18 @@
 {
   "projects": {
     "default": "weather-monitor-f4248"
-  }
+  },
+  "targets": {
+    "weather-monitor-f4248": {
+      "hosting": {
+        "main": [
+          "weather-monitor-f4248"
+        ],
+        "custom": [
+          "meteorologus"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }

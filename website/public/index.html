@@ -229,6 +229,18 @@
     }
     .claim-btn:active { transform: scale(.97); }
 
+    /* --- unpair --- */
+    .unpair-btn {
+      background: transparent; border: 1px solid rgba(251,113,133,.45);
+      color: #fb7185; font-family: inherit; font-weight: 700;
+      padding: clamp(.4rem, 1.5cqi, .6rem) clamp(.7rem, 2.2cqi, 1.1rem);
+      border-radius: 999px; font-size: clamp(.62rem, 2cqi, .78rem);
+      cursor: pointer; transition: all .15s;
+    }
+    .unpair-btn:hover:not(:disabled) { background: rgba(251,113,133,.12); }
+    .unpair-btn:active:not(:disabled) { transform: scale(.97); }
+    .unpair-btn:disabled { opacity: .4; cursor: not-allowed; }
+
     /* --- hero --- */
     .hero-icon { font-size: clamp(1.6rem, 6cqi, 2.4rem); text-align: center; margin-bottom: clamp(.3rem, 1.2cqi, .5rem); }
   </style>
@@ -485,6 +497,10 @@
           <div class="dot active" id="dot0"></div>
           <div class="dot" id="dot1"></div>
         </div>
+        <div class="card" style="text-align:center;">
+          <button class="unpair-btn" data-unpair-mac="${mac}">Unpair this device</button>
+          <div class="msg" id="unpair-res-${mac}"></div>
+        </div>
       `;
     }
 
@@ -666,6 +682,37 @@
     $("refresh-btn").addEventListener("click", () => {
       const u = firebase.auth().currentUser;
       if (u) loadDashboard(u);
+    });
+
+    // Event delegation on the permanent #dash container so the handler survives
+    // every loadDashboard() re-render.
+    $("dash").addEventListener("click", async e => {
+      const btn = e.target.closest("button[data-unpair-mac]");
+      if (!btn) return;
+      const user = firebase.auth().currentUser;
+      const mac = btn.getAttribute("data-unpair-mac");
+      if (!user || !MAC_RE.test(mac || "")) return;
+      const res = document.getElementById("unpair-res-" + mac);
+
+      if (!confirm("Unpair " + mac + "?\n\nThe device's stored history is erased, the pairing token is revoked, and the node returns to pairing mode (QR) on its next connection.")) return;
+
+      btn.disabled = true;
+      if (res) { res.className = "msg"; res.textContent = "Unpairing..."; }
+      try {
+        // Order matters with the security rules:
+        // 1. history  (allowed while the claim still exists)
+        // 2. claim    (allowed because this user still owns the device)
+        // 3. owned_devices (owner-only namespace)
+        await db.ref("devices/" + mac).remove();
+        await db.ref("claimed_devices/" + mac).remove();
+        await db.ref("users/" + user.uid + "/owned_devices/" + mac).remove();
+        if (res) { res.textContent = "Unpaired. The node resets to pairing mode on its next connection."; res.className = "msg ok"; }
+        btn.remove();
+        loadDashboard(user);
+      } catch (err) {
+        if (res) { res.textContent = "Failed: " + err.message; res.className = "msg err"; }
+        btn.disabled = false;
+      }
     });
 
     $("claim-btn").addEventListener("click", async () => {

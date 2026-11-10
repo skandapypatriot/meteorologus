@@ -3,7 +3,7 @@
     "claimed_devices": {
       "$device_id": {
         ".read": true,
-        ".write": "auth != null"
+        ".write": "auth != null && (!data.exists() || root.child('users').child(auth.uid).child('owned_devices').child($device_id).exists())"
       }
     },
     "devices": {

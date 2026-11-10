@@ -83,7 +83,7 @@
 // has ever been claimed in the web app, so a local-only / no-cloud-account
 // setup works too.
 #ifndef HA_MQTT_ENABLED
-  #define HA_MQTT_ENABLED 1
+  #define HA_MQTT_ENABLED 0
 #endif
 #define MQTT_BROKER_HOST      "192.168.1.10"   // <-- set to your broker's IP/hostname
 #define MQTT_BROKER_PORT      1883
@@ -98,7 +98,7 @@
 #define DHTTYPE DHT11 
 #define I2C_SDA 4   // was 8: GPIO8/9 are strapping pins (GPIO9 = BOOT button)
 #define I2C_SCL 5
-#define WAKE_BUTTON_PIN 3
+#define WAKE_BUTTON_PIN 1
 
 // Timing & Intervals
 #define SENSOR_UPDATE 1000 
@@ -667,6 +667,56 @@ void clear_device_key() {
   prefs.end();
   device_key = "";
   device_claimed = false;
+}
+
+// Full pairing reset used when the cloud removes this device's claim ("unpair"
+// from the dashboard): clears the claim token AND all stored Wi-Fi
+// credentials, restoring compile-time defaults. Deliberately does NOT touch
+// wifi_available - whatever connection the session already has is fine; the
+// in-memory credentials just point back at the compile-time fallbacks.
+void reset_device_identity() {
+  clear_device_key();
+
+  Preferences prefs;
+  prefs.begin("wifi", false);
+  prefs.clear();          // ssid, password, offline counter
+  prefs.end();
+
+  wifi_ssid = WIFI_SSID;
+  wifi_password = WIFI_PASS;
+  wifi_offline_seconds = 0;
+}
+
+// Check whether the owner unpaired this device on the dashboard: the claim
+// node under /claimed_devices/<MAC> disappears (REST returns literal `null`).
+// On revocation the node wipes its claim key AND Wi-Fi credentials and returns
+// to the QR pairing flow. Runs once per awake window on claimed devices.
+bool check_claim_revoked() {
+  if (!wifi_available || !device_claimed) return false;
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(5000);
+  HTTPClient https;
+  https.setReuse(false);
+
+  String url = String(FIREBASE_BASE_URL) + "/claimed_devices/" + device_id + ".json";
+  bool revoked = false;
+  if (https.begin(client, url)) {
+    int code = https.GET();
+    if (code == 200) {
+      String payload = https.getString();
+      payload.trim();
+      if (payload.isEmpty() || payload == "null") revoked = true;
+    }
+  }
+  https.end();
+
+  if (revoked) {
+    reset_device_identity();
+    LOGLN("[provision] Claim removed in the cloud (unpaired) - node reset to pairing mode, Wi-Fi credentials erased.");
+  }
+  return revoked;
 }
 
 // One-shot HTTPS check: if someone claimed this device in the web app, fetch
@@ -1385,7 +1435,7 @@ void setup() {
       u8g2.drawStr(titleX, 64, title);
   } while (u8g2.nextPage());
   
-  delay(1500); 
+  delay(200); 
 #endif
   // Initial read & sync process before UI starts cycling
   esp_wifi_set_ps(WIFI_PS_NONE);
@@ -1405,6 +1455,8 @@ void setup() {
 
   if (device_claimed) {
     LOGLN("[provision] Stored claim key present, device is claimed.");
+    // Handle a dashboard-side unpair: returns to pairing mode if the claim went away.
+    check_claim_revoked();
   } else {
     LOGLN("[provision] No stored key - checking cloud for a claim...");
     check_remote_provisioning();

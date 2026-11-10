@@ -1,17 +1,21 @@
-# meteorologus_app
+# Meteorologus mobile app
 
-A new Flutter project.
+Flutter companion app for the Meteorologus IoT weather system: Firebase email/password auth, QR/MAC device claiming, live dashboard with forecast slides, and device unpairing — sharing the same Realtime Database, security rules and claim flow as the web dashboard ([`website/`](../website/README.md)).
 
-## Getting Started
+## Features
 
-This project is a starting point for a Flutter application.
+- **Sign in / register** — Firebase Auth email + password.
+- **Claim a node** — scan the node's QR code or type its 12-hex MAC (`ClaimDialog`); mints the pairing token the device picks up on its next connection.
+- **Live dashboard** — current conditions, 3-day forecast slides, per-device selection for multi-node accounts.
+- **Unpair a device** — header `link_off` button opens a confirmation for the selected device, then `ClaimService.unclaimDevice()` deletes the node's history (`devices/<MAC>`), revokes the claim token (`claimed_devices/<MAC>`) and removes it from your owned list, in that order (required by the security rules). The node notices the revoked claim on its next wake, erases its stored credentials itself, and returns to QR pairing mode.
 
-A few resources to get you started if this is your first Flutter project:
+## Run
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+```powershell
+flutter pub get
+flutter run
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Firebase config is expected in `lib/config/firebase_options.dart`; the Realtime Database URL comes from `firebase_options.dart` (`databaseURL`).
+
+Firebase Realtime DB schema and rules that this app writes to live in [`website/database.rules.json`](../website/database.rules.json).

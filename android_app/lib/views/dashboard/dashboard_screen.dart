@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../providers/weather_provider.dart';
+import '../../services/claim_service.dart';
 import '../../utils/glass_container.dart';
 import '../claim/claim_dialog.dart';
 import 'widgets/current_slide.dart';
@@ -43,6 +44,79 @@ class _DashboardScreenState extends State<DashboardScreen> {
       context: context,
       builder: (_) => ClaimDialog(initialMac: initialMac),
     );
+  }
+
+  /// Mirrors the dashboard's "Unpair this device": deletes the node's history,
+  /// revokes the claim and drops it from the owner's list. The node erases its
+  /// own credentials on the next wake and returns to QR pairing mode.
+  Future<void> _unpairSelectedDevice(WeatherProvider weather) async {
+    final device = weather.selectedDevice;
+    if (device == null) return;
+    final user = context.read<AuthProvider>().user;
+    if (user == null) return;
+    final theme = context.read<ThemeProvider>().theme;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1B4B),
+        title: Text(
+          'Unpair ${device.mac}',
+          style: TextStyle(color: theme.textColor, fontSize: 16, fontWeight: FontWeight.w800),
+        ),
+        content: Text(
+          'The device\'s stored history is erased, the pairing token is revoked, '
+          'and the node returns to pairing mode (QR) on its next connection.',
+          style: TextStyle(color: theme.textColor.withAlpha(180), fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('Cancel', style: TextStyle(color: theme.textColor)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text(
+              'Unpair',
+              style: TextStyle(
+                color: Color(0xFFFB7185),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      await ClaimService().unclaimDevice(uid: user.uid, mac: device.mac);
+      if (!mounted) return;
+      await weather.refresh();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: const Color(0xFF1E1B4B),
+          content: Text(
+            'Unpaired ${device.mac}. The node resets to pairing mode on its next connection.',
+            style: TextStyle(color: theme.textColor, fontSize: 13),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: const Color(0xFF1E1B4B),
+          content: Text(
+            'Unpair failed: $e',
+            style: const TextStyle(color: Color(0xFFFB7185), fontSize: 13),
+          ),
+        ),
+      );
+    }
   }
 
   @override
@@ -119,6 +193,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               tooltip: 'Claim node',
                               textColor: theme.textColor,
                               onPressed: () => _openClaimDialog(),
+                            ),
+                            const SizedBox(width: 5),
+                            // Unpair button for the selected device
+                            _HeaderIconButton(
+                              icon: Icons.link_off,
+                              tooltip: 'Unpair node',
+                              textColor: theme.textColor,
+                              onPressed: () => _unpairSelectedDevice(weather),
                             ),
                             const SizedBox(width: 5),
                             // Refresh button

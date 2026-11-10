@@ -215,6 +215,7 @@ sequenceDiagram
 - The token is stored in NVS namespace `auth` as `device_key`.
 - Every cloud write is rejected by security rules unless the device is listed in `/claimed_devices/<MAC>`.
 - If Firebase answers `401/403`, the firmware clears the stored key and returns to pairing mode automatically.
+- **Unpair (from the dashboard):** the owner can unpair via *Unpair this device* on the web app, which deletes the claim, the user's owned-device entry and the sensor history. On its next wake the node checks `claimed_devices/<MAC>` (`check_claim_revoked()`), finds `null`, and calls `reset_device_identity()` — claim key **and** Wi-Fi credentials erased, QR pairing flow resumes.
 
 ### Wi-Fi Setup Portal
 
@@ -315,5 +316,6 @@ Serial logs print exact disconnect reasons. Common ones:
 | `RTC Error` on screen 1 | DS3231 missing or lost power | Expected without RTC; NTP takes over |
 | Stuck on pairing screen | Never claimed | Complete the QR flow; check `CLAIM_WEB_BASE` matches your deployed site |
 | `401/403` on POST | Claim revoked or rules changed | Device auto-clears key → re-pair |
+| Node unexpectedly back on QR screen | Owner unpaired it on the dashboard | Expected: unpair erases claim + Wi-Fi creds; claim it again via the QR |
 | Forecast stuck on `Local AI` | Server not running / no fresh data | See [inferenceserver README](../inferenceserver/README.md) |
 | OLED/sensors dead permanently | BC547 wired backwards or base resistor missing | Verify C-B-E orientation and the GPIO 10 → 1 kΩ → base path |

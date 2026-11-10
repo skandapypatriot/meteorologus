@@ -88,4 +88,44 @@ class ClaimService {
       }
     }
   }
+
+  /// Removes the pairing between a node and the signed-in owner, mirroring the
+  /// dashboard's "Unpair this device" button. Deletes, in this order:
+  ///   1. devices/<mac>            - sensor history
+  ///   2. claimed_devices/<mac>    - the pairing token (revoked)
+  ///   3. users/<uid>/owned_devices/<mac> - the owner's device list entry
+  /// The order matters with the security rules: /devices writes are only
+  /// permitted while the claim still exists, and deleting the claim requires
+  /// the owned_devices entry to still be present, so it must go last.
+  /// After the revocation the node itself clears its claim key and Wi-Fi
+  /// credentials on its next wake and returns to QR pairing mode.
+  Future<void> unclaimDevice({
+    required String uid,
+    required String mac,
+  }) async {
+    final cleanMac = normalizeMac(mac);
+    if (!isValidMac(cleanMac)) {
+      throw Exception('Invalid MAC address. Must be 12 hexadecimal characters.');
+    }
+
+    Future<void> remove(String path) async {
+      try {
+        await _db.ref(path).remove();
+      } catch (_) {
+        // Fallback via REST
+        final user = FirebaseAuth.instance.currentUser;
+        final idToken = await user?.getIdToken();
+        final tokenQuery = idToken != null ? '?auth=$idToken' : '';
+        final uri = Uri.parse('$_baseUrl/$path.json$tokenQuery');
+        final res = await http.delete(uri);
+        if (res.statusCode != 200) {
+          throw Exception('Failed to delete $path: ${res.body}');
+        }
+      }
+    }
+
+    await remove('devices/$cleanMac');
+    await remove('claimed_devices/$cleanMac');
+    await remove('users/$uid/owned_devices/$cleanMac');
+  }
 }
