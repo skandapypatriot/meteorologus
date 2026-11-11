@@ -6,6 +6,7 @@ import '../../providers/weather_provider.dart';
 import '../../services/claim_service.dart';
 import '../../utils/glass_container.dart';
 import '../claim/claim_dialog.dart';
+import '../offline/offline_screen.dart';
 import 'widgets/current_slide.dart';
 import 'widgets/device_selector.dart';
 import 'widgets/forecast_slide.dart';
@@ -201,6 +202,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               tooltip: 'Unpair node',
                               textColor: theme.textColor,
                               onPressed: () => _unpairSelectedDevice(weather),
+                            ),
+                            const SizedBox(width: 5),
+                            // Offline mode button
+                            _HeaderIconButton(
+                              icon: Icons.cloud_off,
+                              tooltip: 'Offline mode',
+                              textColor: theme.textColor,
+                              onPressed: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => const OfflineScreen(),
+                                  ),
+                                );
+                              },
                             ),
                             const SizedBox(width: 5),
                             // Refresh button

@@ -22,6 +22,7 @@
 #include "esp_bt.h"
 #include "icons.h"
 #include "models.h"
+#include "offline_store.h"
 #include "qrcode.h"
 
 // --- RTC (DS3231) SUPPORT ---
@@ -138,6 +139,21 @@ unsigned long wifi_portal_reconnect_started = 0;
 unsigned long wifi_offline_seconds = 0;
 const unsigned long FIREBASE_SYNC_INTERVAL = 12000; // 12 seconds
 SemaphoreHandle_t fb_mutex = NULL;
+
+// --- OFFLINE MODE STATE (OFFLINE_MODE build flag) ---
+#if OFFLINE_MODE
+WebServer offline_portal_server(81); // alternate port so it can coexist with Wi-Fi portal
+DNSServer offline_portal_dns;
+bool offline_portal_active = false;
+unsigned long offline_portal_started = 0;
+// Triple-press detection
+unsigned long button_press_times[3] = {0, 0, 0};
+int button_press_count = 0;
+unsigned long last_button_press_ms = 0;
+const unsigned long TRIPLE_PRESS_WINDOW_MS = 1500; // 3 presses within 1.5s
+const int OFFLINE_BUTTON_PIN = WAKE_BUTTON_PIN;    // same physical wake button
+bool offline_mode_enabled = false;                 // set true when triple-press detected
+#endif
 
 // Sensor Instances
 DHT dht(DHTPIN, DHTTYPE); 
@@ -569,6 +585,134 @@ void stop_wifi_portal() {
   LOGLN("[wifi] Setup portal stopped");
 }
 
+#if OFFLINE_MODE
+// ----------------------------------------------------
+// OFFLINE MODE — HOTSPOT / CAPTIVE PORTAL
+// Only starts when the device has no Wi-Fi/internet and
+// the user has triple-pressed the button while awake.
+// Serves a tiny HTML dashboard + JSON API on port 81.
+// ----------------------------------------------------
+
+String offline_portal_page() {
+  OfflinePrediction latest;
+  bool have = offline_store_latest(latest);
+
+  String page = R"HTML(<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Meteorologus Offline</title><style>body{font-family:system-ui,sans-serif;margin:0;padding:1rem;background:#0f172a;color:#e2e8f0} h1{font-size:1.25rem;margin-bottom:.5rem} .card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:1rem;margin-bottom:1rem} .row{display:flex;gap:.5rem;flex-wrap:wrap} .val{font-size:1.5rem;font-weight:700} .lbl{font-size:.75rem;opacity:.7;text-transform:uppercase;letter-spacing:.5px} .forecast{display:flex;gap:.5rem;margin-top:.5rem} .day{flex:1;background:#334155;border-radius:8px;padding:.5rem;text-align:center} .emoji{font-size:1.5rem} .desc{font-size:.8rem;margin-top:.25rem} .muted{opacity:.6;font-size:.85rem} a{color:#60a5fa;text-decoration:none} a:hover{text-decoration:underline} button{background:#3b82f6;color:#fff;border:0;border-radius:8px;padding:.6rem 1rem;font-weight:600;cursor:pointer} button:hover{background:#2563eb}</style></head><body><h1>Meteorologus — Offline</h1><p class="muted">Local predictions only. Data clears after 30 days.</p>)HTML";
+
+  if (have) {
+    page += R"HTML(<div class="card"><div class="row"><div><div class="val">)";
+    page += String(latest.t, 1);
+    page += R"HTML(°C</div><div class="lbl">Temperature</div></div><div><div class="val">)";
+    page += String((int)latest.h);
+    page += R"HTML(%</div><div class="lbl">Humidity</div></div><div><div class="val">)";
+    page += String(latest.p, 1);
+    page += R"HTML(hPa</div><div class="lbl">Pressure</div></div></div><div class="muted">Updated: )";
+    page += now_iso();
+    page += R"HTML(</div></div><div class="card"><div style="font-weight:600;margin-bottom:.5rem">3-Day Forecast (Local AI)</div><div class="forecast">)HTML";
+
+    for (int i = 0; i < 3; i++) {
+      int code = latest.forecast[i];
+      page += R"HTML(<div class="day"><div class="emoji">)";
+      page += String(getWeatherCategory(code).c_str());
+      page += R"HTML(</div><div class="desc">Day )";
+      page += String(i + 1);
+      page += R"HTML(</div></div>)HTML";
+    }
+
+    page += R"HTML(</div></div>)HTML";
+  } else {
+    page += R"HTML(<div class="card">No offline predictions stored yet.</div>)HTML";
+  }
+
+  page += R"HTML(<p class="muted"><a href="/api/latest">JSON latest</a> · <a href="/api/readings">JSON all</a> · <button onclick="fetch('/api/latest').then(r=>r.json()).then(d=>alert(JSON.stringify(d)))">Refresh</button></p></body></html>)HTML";
+  return page;
+}
+
+void start_offline_portal() {
+  if (offline_portal_active) return;
+
+  String ap_name = String("WeatherMonitor-") + device_id.substring(6);
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(ap_name.c_str());
+  offline_portal_dns.start(53, "*", WiFi.softAPIP());
+
+  offline_portal_server.on("/", HTTP_GET, []() {
+    offline_portal_server.send(200, "text/html", offline_portal_page());
+  });
+  offline_portal_server.on("/api/latest", HTTP_GET, []() {
+    OfflinePrediction p;
+    if (offline_store_latest(p)) {
+      String json = "{\"ts\":" + String(p.ts) + ",\"t\":" + String(p.t, 1) +
+                    ",\"h\":" + String(p.h, 1) + ",\"p\":" + String(p.p, 1) +
+                    ",\"weather_code\":" + String(p.weather_code) +
+                    ",\"forecast\":[" + String(p.forecast[0]) + "," + String(p.forecast[1]) + "," + String(p.forecast[2]) + "]}";
+      offline_portal_server.send(200, "application/json", json);
+    } else {
+      offline_portal_server.send(404, "application/json", "{\"error\":\"no data\"}");
+    }
+  });
+  offline_portal_server.on("/api/readings", HTTP_GET, []() {
+    OfflinePrediction buf[OFFLINE_MAX_ENTRIES];
+    int n = offline_store_read(buf, OFFLINE_MAX_ENTRIES);
+    String json = "[";
+    for (int i = 0; i < n; i++) {
+      if (i > 0) json += ",";
+      json += "{\"ts\":" + String(buf[i].ts) + ",\"t\":" + String(buf[i].t, 1) +
+              ",\"h\":" + String(buf[i].h, 1) + ",\"p\":" + String(buf[i].p, 1) +
+              ",\"weather_code\":" + String(buf[i].weather_code) +
+              ",\"forecast\":[" + String(buf[i].forecast[0]) + "," + String(buf[i].forecast[1]) + "," + String(buf[i].forecast[2]) + "]";
+    }
+    json += "]";
+    offline_portal_server.send(200, "application/json", json);
+  });
+  offline_portal_server.onNotFound([]() {
+    offline_portal_server.send(200, "text/html", offline_portal_page());
+  });
+  offline_portal_server.begin();
+  offline_portal_active = true;
+  offline_portal_started = millis();
+  LOGF("[offline] Portal started on AP '%s' at %s\n", ap_name.c_str(), WiFi.softAPIP().toString().c_str());
+}
+
+void stop_offline_portal() {
+  offline_portal_server.stop();
+  offline_portal_dns.stop();
+  WiFi.softAPdisconnect(true);
+  offline_portal_active = false;
+  LOGLN("[offline] Portal stopped");
+}
+
+void handle_offline_portal() {
+  offline_portal_dns.processNextRequest();
+  offline_portal_server.handleClient();
+}
+
+// Detect triple-press on the button while device is awake.
+// Returns true when the triple-press sequence is completed.
+bool check_triple_press() {
+  if (digitalRead(OFFLINE_BUTTON_PIN) != LOW) return false; // active-low button
+  unsigned long now = millis();
+  if (now - last_button_press_ms < debounceDelay) return false;
+  last_button_press_ms = now;
+
+  // Shift history
+  button_press_times[2] = button_press_times[1];
+  button_press_times[1] = button_press_times[0];
+  button_press_times[0] = now;
+
+  if (button_press_count < 3) button_press_count++;
+
+  // Check if we have 3 presses within the window
+  if (button_press_count >= 3 &&
+      (now - button_press_times[2]) <= TRIPLE_PRESS_WINDOW_MS) {
+    button_press_count = 0; // reset after detecting
+    button_press_times[0] = button_press_times[1] = button_press_times[2] = 0;
+    return true;
+  }
+  return false;
+}
+#endif // OFFLINE_MODE
+
 void handle_wifi_portal() {
   wifi_portal_dns.processNextRequest();
   wifi_portal_server.handleClient();
@@ -611,6 +755,10 @@ void check_wifi_status(){
     wifi_available = (WiFi.status() == WL_CONNECTED);
 
     if (wifi_available) {
+#if OFFLINE_MODE
+      stop_offline_portal();
+      offline_mode_enabled = false;
+#endif
       wifi_offline_seconds = 0;
       Preferences prefs;
       prefs.begin("wifi", false);
@@ -1364,6 +1512,10 @@ void setup() {
   
   pinMode(POWER_PIN, OUTPUT);
   digitalWrite(POWER_PIN, HIGH); 
+
+#if OFFLINE_MODE
+  pinMode(OFFLINE_BUTTON_PIN, INPUT_PULLUP);
+#endif
   
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
   if(wakeup_reason == ESP_SLEEP_WAKEUP_GPIO) {
@@ -1447,6 +1599,10 @@ void setup() {
   device_key = get_stored_device_key();
   device_claimed = (device_key.length() > 0);
 
+#if OFFLINE_MODE
+  offline_store_begin();
+#endif
+
   check_wifi_status();
   sync_time(); // NTP is the only time source; re-synced on every wakeup
 
@@ -1495,6 +1651,26 @@ void loop() {
     handle_wifi_portal();
     return;
   }
+
+#if OFFLINE_MODE
+  if (offline_portal_active) {
+    handle_offline_portal();
+    return;
+  }
+
+  // Triple-press detection while awake and claimed, no Wi-Fi
+  if (device_claimed && !wifi_available) {
+    if (check_triple_press()) {
+      offline_mode_enabled = true;
+      start_offline_portal();
+    }
+  }
+
+  // Keep the offline portal alive if already enabled
+  if (offline_mode_enabled && !offline_portal_active && !wifi_available) {
+    start_offline_portal();
+  }
+#endif
 
   // 1. Read Sensors Periodically (skipped entirely while unpaired)
   if (now - lastsensorupdate >= SENSOR_UPDATE){

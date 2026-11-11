@@ -6,6 +6,9 @@
 #include "weather_model_same.h"
 #include "weather_model_3d.h"
 #include "scalers.h"
+#if OFFLINE_MODE
+#include "offline_store.h"
+#endif
 
 #if defined(LOGGING_ENABLED) && LOGGING_ENABLED
   #define MLOG(...) Serial.printf(__VA_ARGS__)
@@ -164,4 +167,18 @@ void run_local_prediction() {
   }
 
   save_history();
+
+#if OFFLINE_MODE
+  // Persist the local prediction to flash for offline retrieval.
+  OfflinePrediction op;
+  op.ts = (long)time(nullptr);
+  op.t = temp;
+  op.h = humidity;
+  op.p = pressure;
+  op.weather_code = currentWeatherCode;
+  op.forecast[0] = forecastCodes[0];
+  op.forecast[1] = forecastCodes[1];
+  op.forecast[2] = forecastCodes[2];
+  offline_store_save(op);
+#endif
 }
