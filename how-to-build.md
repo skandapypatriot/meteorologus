@@ -311,7 +311,6 @@ A failed join adds retries and an 8 s full network scan (`log_wifi_scan()`) with
 4. Move to perfboard/PCB: sockets first, then the switched-GND star to the transistor, then battery wiring.
 5. Enclose with an OLED window and sensor ventilation; the pairing flow needs no computer — just the QR.
 6. Released PCB design files: [`pcb fab file and schematic/`](<pcb fab file and schematic/>) (Gerbers + schematic PDF, 2026-11-07 revision).
-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
 ---
 
 
