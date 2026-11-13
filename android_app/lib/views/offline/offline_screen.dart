@@ -12,7 +12,7 @@ class OfflineScreen extends StatefulWidget {
   const OfflineScreen({super.key});
 
   @override
-  State<OfflineScreen> createState() => _OfflineScreenState>();
+  State<OfflineScreen> createState() => _OfflineScreenState();
 }
 
 class _OfflineScreenState extends State<OfflineScreen> {
@@ -27,6 +27,7 @@ class _OfflineScreenState extends State<OfflineScreen> {
 
   @override
   void dispose() {
+    _ipController.dispose();
     super.dispose();
   }
 
@@ -186,12 +187,9 @@ class _OfflineScreenState extends State<OfflineScreen> {
                                 ),
                               ),
                               const SizedBox(height: 8),
-                              Text(
+                              const Text(
                                 'Offline data · clears after 30 days',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey,
-                                ),
+                                style: TextStyle(fontSize: 11, color: Colors.grey),
                               ),
                             ],
                           ),
