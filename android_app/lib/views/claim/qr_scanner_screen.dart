@@ -1,15 +1,36 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../services/claim_service.dart';
 
-class QRScannerScreen extends StatefulWidget {
+class QRScannerScreen extends StatelessWidget {
   const QRScannerScreen({super.key});
 
   @override
-  State<QRScannerScreen> createState() => _QRScannerScreenState();
+  Widget build(BuildContext context) {
+    if (kIsWeb) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('QR scan unavailable')),
+        body: const Center(
+          child: Text(
+            'QR scanning is not supported in the web build. Use the Android/iOS app instead.',
+          ),
+        ),
+      );
+    }
+
+    return const _NativeQRScannerScreen();
+  }
 }
 
-class _QRScannerScreenState extends State<QRScannerScreen> {
+class _NativeQRScannerScreen extends StatefulWidget {
+  const _NativeQRScannerScreen();
+
+  @override
+  State<_NativeQRScannerScreen> createState() => _NativeQRScannerScreenState();
+}
+
+class _NativeQRScannerScreenState extends State<_NativeQRScannerScreen> {
   final MobileScannerController _controller = MobileScannerController(
     detectionSpeed: DetectionSpeed.noDuplicates,
   );
@@ -23,7 +44,6 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
       final rawVal = barcode.rawValue;
       if (rawVal != null && rawVal.isNotEmpty) {
         String candidate = rawVal.trim();
-        // If it is a URL, get the last segment
         if (candidate.contains('/')) {
           final uri = Uri.tryParse(candidate);
           if (uri != null && uri.pathSegments.isNotEmpty) {
@@ -102,7 +122,6 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
             controller: _controller,
             onDetect: _onDetect,
           ),
-          // Target Box Overlay
           Container(
             width: 250,
             height: 250,
