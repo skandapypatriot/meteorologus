@@ -74,42 +74,6 @@ jobs:
           retention-days: 7
 
   # ================================================================
-  # 2. Flutter Web Build (Zipped)
-  # ================================================================
-  build-flutter-web:
-    name: Build Flutter Web
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-          cache: true
-
-      - name: Install dependencies
-        working-directory: android_app
-        run: flutter pub get
-
-      - name: Build Web Application
-        working-directory: android_app
-        run: flutter build web --release
-
-      - name: Package Web Build as Zip
-        run: |
-          cd android_app/build/web
-          zip -r ../../../meteorologus-web.zip .
-
-      - name: Upload Web Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: flutter-web-artifact
-          path: meteorologus-web.zip
-          retention-days: 7
-
-  # ================================================================
   # 3. Flutter Android Build (APK)
   # ================================================================
   build-flutter-android:
@@ -208,7 +172,7 @@ jobs:
   # ================================================================
   release:
     name: Create GitHub Release
-    needs: [build-firmware, build-flutter-web, build-flutter-android, build-flutter-windows]
+    needs: [build-firmware, build-flutter-android, build-flutter-windows]
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
@@ -247,7 +211,6 @@ jobs:
             release_assets/**/firmware.bin
             release_assets/**/meteorologus-android.apk
             release_assets/**/meteorologus-firmware-esp32c3.zip
-            release_assets/**/meteorologus-web.zip
             release_assets/**/meteorologus-windows-setup.exe
             release_assets/**/meteorologus-windows-x64.zip
             release_assets/**/partitions.bin
