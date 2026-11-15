@@ -1106,6 +1106,33 @@ void draw_hotspot_screen() {
   } while (u8g2.nextPage());
 }
 
+void draw_wifi_portal_screen() {
+  String ap_name = String("WeatherMonitor-") + device_id.substring(6);
+
+  u8g2.firstPage();
+  do {
+    // Title
+    u8g2.setFont(u8g2_font_profont11_tr);
+    u8g2.drawStr(2, 10, "WiFi PORTAL");
+    u8g2.drawHLine(0, 14, 128);
+
+    u8g2.setFont(u8g2_font_profont10_tr);
+    u8g2.drawStr(2, 22, "Connect to AP:");
+    u8g2.setFont(u8g2_font_profont11_tr);
+
+    String ssid_display = ap_name;
+    if (u8g2.getStrWidth(ssid_display.c_str()) > 124) {
+      ssid_display = ssid_display.substring(0, 16) + "..";
+    }
+    u8g2.drawStr(2, 34, ssid_display.c_str());
+
+    u8g2.setFont(u8g2_font_profont10_tr);
+    u8g2.drawStr(2, 46, "Open http://192.168.4.1");
+    u8g2.drawStr(2, 56, "Long press to exit");
+
+  } while (u8g2.nextPage());
+}
+
 // Check whether the owner unpaired this device on the dashboard: the claim
 // node under /claimed_devices/<MAC> disappears (REST returns literal `null`).
 // On revocation the node wipes its claim key AND Wi-Fi credentials and returns
@@ -2190,6 +2217,9 @@ void loop() {
             stop_hotspot_mode();
             hotspot_mode_triggered = false;
           }
+          if (wifi_portal_active) {
+            stop_wifi_portal();
+          }
           button_press_count = 0;
         }
       }
@@ -2248,6 +2278,12 @@ void loop() {
 
   if (wifi_portal_active) {
     handle_wifi_portal();
+    #if !HEADLESS_MODE
+    if (now - lastguiupdate >= 1000) {
+      draw_wifi_portal_screen();
+      lastguiupdate = now;
+    }
+    #endif
     return;
   }
 
