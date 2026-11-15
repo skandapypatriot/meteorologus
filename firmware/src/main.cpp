@@ -1635,6 +1635,24 @@ void draw_claiming_qr() {
 }
 
 void update_gui() {
+  // In offline mode, always show sensor screens (no pairing QR)
+  if (offline_mode) {
+    // Hotspot mode screen takes priority
+    if (hotspot_active) {
+      draw_hotspot_screen();
+      return;
+    }
+    u8g2.firstPage();
+    do {
+      // In offline mode, show simplified screens (no WiFi status screen)
+      if (current_screen == 0) draw_screen_one();
+      else if (current_screen == 1) draw_screen_three(); // Skip WiFi screen, go to forecast
+      else draw_screen_four();
+    } while (u8g2.nextPage());
+    return;
+  }
+
+  // Normal online mode: check if claimed
   if (!device_claimed) {
     // Unpaired: alternate the instructions screen and the claim QR.
     if (current_screen == 0) draw_claim_instructions();
@@ -1650,17 +1668,10 @@ void update_gui() {
 
   u8g2.firstPage();
   do {
-      // In offline mode, show simplified screens (no WiFi status screen)
-      if (offline_mode) {
-        if (current_screen == 0) draw_screen_one();
-        else if (current_screen == 1) draw_screen_three(); // Skip WiFi screen, go to forecast
-        else draw_screen_four();
-      } else {
-        if (current_screen == 0) draw_screen_one();
-        else if (current_screen == 1) draw_screen_two();
-        else if (current_screen == 2) draw_screen_three();
-        else draw_screen_four();
-      }
+    if (current_screen == 0) draw_screen_one();
+    else if (current_screen == 1) draw_screen_two();
+    else if (current_screen == 2) draw_screen_three();
+    else draw_screen_four();
 
   } while (u8g2.nextPage()); 
 }
@@ -1965,8 +1976,17 @@ void loop() {
   }
 
   // 2. Screen Transitions
-  if (now - last_screen_switch >= SCREEN_DURATION) {  
-    if (!device_claimed) {
+  if (now - last_screen_switch >= SCREEN_DURATION) {
+    if (offline_mode) {
+      // In offline mode, cycle through sensor screens only
+      int last_screen = (gas_sensor != GasSensor::NONE) ? 2 : 1; // 0: main, 1: forecast, (2: air quality if BME680)
+      current_screen++;
+      if (current_screen > last_screen) current_screen = 0;
+      // Re-run local model whenever the forecast/prediction screen is shown
+      if (current_screen == 1) {
+        run_local_prediction();
+      }
+    } else if (!device_claimed) {
       current_screen = (current_screen == 0) ? 1 : 0; // instructions <-> QR
     } else {
       int last_screen = (gas_sensor != GasSensor::NONE) ? 3 : 2; // +1 screen (Air Quality) with a BME680
@@ -1984,7 +2004,7 @@ void loop() {
 
   // 3. Update OLED
 #if !HEADLESS_MODE
-  if (gui_dirty || (device_claimed && now - lastguiupdate >= OLED_UPDATE)) {
+  if (gui_dirty || ((offline_mode || device_claimed) && (now - lastguiupdate >= OLED_UPDATE))) {
       update_gui();
       lastguiupdate = now;
       gui_dirty = false;
