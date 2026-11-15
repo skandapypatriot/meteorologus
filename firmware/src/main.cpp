@@ -20,6 +20,7 @@
 #include <Preferences.h>
 #include "esp_wifi.h"
 #include "esp_bt.h"
+#include "esp_system.h"
 #include "icons.h"
 #include "models.h"
 #include "qrcode.h"
@@ -680,10 +681,10 @@ void check_wifi_status(){
 // DEVICE IDENTITY & PROVISIONING (NVS "auth" namespace)
 // ----------------------------------------------------
 String get_device_id() {
-  String mac = WiFi.macAddress();
-  mac.replace(":", "");
-  mac.toUpperCase();
-  return mac;
+  uint64_t chipid = ESP.getEfuseMac();
+  char macStr[13];
+  sprintf(macStr, "%012llX", chipid);
+  return String(macStr);
 }
 
 String  get_stored_device_key() {
@@ -1747,12 +1748,6 @@ void setup() {
   // Load offline mode setting
   load_offline_mode();
   load_inference_history();
-  
-  // Initialize WiFi briefly to get MAC address (needed for both modes)
-  esp_wifi_set_ps(WIFI_PS_NONE);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin();
-  delay(100);
   
   device_id = get_device_id();
   device_key = get_stored_device_key();
