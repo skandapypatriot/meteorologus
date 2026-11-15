@@ -124,7 +124,10 @@
 // When enabled, the node never connects to WiFi. Inference runs locally and
 // is stored in flash. Triple-press the wake button to enable hotspot mode
 // for data retrieval. Long-press to exit hotspot mode.
-#define OFFLINE_MODE_ENABLED 1
+// Controlled by -DOFFLINE_MODE_ENABLED=1 in platformio.ini (default 0)
+#ifndef OFFLINE_MODE_ENABLED
+#define OFFLINE_MODE_ENABLED 0
+#endif
 #define HOTSPOT_TIMEOUT_MS 600000UL  // 10 minutes no-client timeout
 #define HOTSPOT_SSID_PREFIX "MeteoData-"
 #define HOTSPOT_PASSWORD "weather123"
