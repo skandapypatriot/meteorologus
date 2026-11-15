@@ -1780,10 +1780,8 @@ void setup() {
     WiFi.mode(WIFI_OFF);
     wifi_available = false;
     
-    // Still run local inference and store in flash
+    // Initial sensor read (model will run in loop after readings stabilize)
     read_sensors();
-    run_local_prediction();
-    store_current_inference();
     print_sensor_data();
     
     // Setup button for triple-press detection
@@ -1982,8 +1980,8 @@ void loop() {
       int last_screen = (gas_sensor != GasSensor::NONE) ? 2 : 1; // 0: main, 1: forecast, (2: air quality if BME680)
       current_screen++;
       if (current_screen > last_screen) current_screen = 0;
-      // Re-run local model whenever the forecast/prediction screen is shown
-      if (current_screen == 1) {
+      // Only run model on forecast screen if it hasn't run with stable readings yet
+      if (current_screen == 1 && !stable_prediction_done) {
         run_local_prediction();
       }
     } else if (!device_claimed) {
