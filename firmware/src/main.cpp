@@ -102,11 +102,13 @@
 #define WAKE_BUTTON_PIN 1
 
 // Timing & Intervals
-#define SENSOR_UPDATE 1000 
-#define OLED_UPDATE 1000
+#define SENSOR_UPDATE 2000       // DHT11 needs >=2s between conversions
+#define OLED_UPDATE 500          // redraw at most twice per second, independent of sensors
 #define SCREEN_DURATION 5000     // 5 seconds per screen
 #define PROVISION_RECHECK_INTERVAL 30000 // poll for a claim every 30s while unpaired
-#define AWAKE_DURATION 20000     // Stay awake for 20s (enough to show all 3 screens) before Deep Sleep
+#define AWAKE_DURATION 30000UL   // Stay awake long enough to get stable readings before Deep Sleep
+#define INFERENCE_STORE_INTERVAL 300000UL // persist at most one offline sample / 5 min while awake
+#define OFFLINE_EPOCH_BASE 1704067200UL   // 2024-01-01 UTC: fallback clock base when no RTC/NTP
 #define WIFI_CONNECT_TIMEOUT 5000
 // SECURITY: these are compile-time FALLBACK defaults only, overridden by
 // whatever is saved via the Wi-Fi Setup Portal (see README). Never commit
@@ -131,9 +133,10 @@
 #endif
 #define HOTSPOT_TIMEOUT_MS 600000UL  // 10 minutes no-client timeout
 #define HOTSPOT_SSID_PREFIX "MeteoData-"
-#define HOTSPOT_PASSWORD "weather123"
-#define BUTTON_TRIPLE_PRESS_WINDOW 1500  // ms to detect 3 presses
+#define HOTSPOT_PASSWORD ""  // Open hotspot: no password
+#define BUTTON_MULTI_PRESS_WINDOW 2000  // ms gap allowed between presses in a multi-press sequence
 #define BUTTON_LONG_PRESS_DURATION 2000  // ms for long press
+#define BUTTON_DEBOUNCE_MS 50            // debounce for button press/release
 #define HOTSPOT_API_PORT 80
   
 
@@ -144,6 +147,13 @@ bool is_logo = false;
 // Debug control - set to false to disable deep sleep
 bool ENABLE_SLEEP = true;
 bool sleep_triggered = false;
+// Button debounce state
+unsigned long last_button_event = 0;
+// Sleep / wake schedule (time of day), stored via WiFi portal. Default: sleep 22:00, wake 06:00.
+uint8_t sleep_hour = 22, sleep_minute = 0;
+uint8_t wake_hour = 6, wake_minute = 0;
+// Override deep-sleep duration when scheduled sleep/wake times are active.
+uint64_t configured_sleep_duration_us = DEEP_SLEEP_DURATION_US;
 String wifi_ssid = WIFI_SSID;
 String wifi_password = WIFI_PASS;
 bool wifi_portal_active = false;
@@ -182,6 +192,12 @@ struct InferenceRecord {
 InferenceRecord inference_history[MAX_INFERENCE_RECORDS];
 int inference_count = 0;
 int inference_head = 0;
+unsigned long offline_clock_base = 0;     // synthetic epoch at boot when no RTC/NTP
+unsigned long last_inference_store = 0;
+bool inference_stored_this_wake = false;
+
+static void save_offline_clock(unsigned long value);
+time_t get_record_timestamp();
 
 // Sensor Instances
 DHT dht(DHTPIN, DHTTYPE); 
@@ -332,6 +348,10 @@ static void sync_time() {
         LOGLN("[time] RTC adjusted from NTP");
       }
 #endif
+      // Keep the fallback clock aligned with real time so offline records
+      // stored after a later outage still get sensible timestamps.
+      offline_clock_base = (unsigned long)now - millis() / 1000UL;
+      save_offline_clock(offline_clock_base);
       return;
     }
   }
@@ -346,13 +366,15 @@ unsigned long last_sync_attempt = 0;
 unsigned long last_fb_sync = 0;
 unsigned long last_provision_check = 0;
 unsigned long boot_done = 0;
+uint8_t sensor_redetect_attempts = 0;
+uint8_t sensor_fail_streak = 0;
+bool i2c_recovery_done = false;
 bool fb_sync_first = true;
-bool gui_dirty = true;   // unpaired: redraw the OLED only when the screen actually changes
 
 int current_screen = 0;
-float humidity = 0;
-float temp = 0;
-float pressure = 0;
+float humidity = NAN;
+float temp = NAN;
+float pressure = NAN;
 
 // Forecast & WiFi state
 int currentWeatherCode = -1;
@@ -512,7 +534,7 @@ void log_wifi_scan() {
   LOGF("[wifi] Scan found %d network(s):\n", n);
   if (n < 0) { LOGF("[wifi] Scan failed (%d)\n", n); return; }
   for (int i = 0; i < n && i < 10; i++) {
-    LOGF("[wifi]   %-22s RSSI=%d AUTH=%ld\n", WiFi.SSID(i).c_str(), WiFi.RSSI(i), (long)WiFi.encryptionType(i));
+    LOGF("[wifi]   %-22s RSSI=%ld AUTH=%ld\n", WiFi.SSID(i).c_str(), (long)WiFi.RSSI(i), (long)WiFi.encryptionType(i));
   }
   WiFi.scanDelete();
 }
@@ -523,6 +545,10 @@ void load_wifi_credentials() {
   String stored_ssid = prefs.getString("ssid", "");
   String stored_password = prefs.getString("password", "");
   wifi_offline_seconds = prefs.getULong("offline_s", 0);
+  sleep_hour = prefs.getUChar("s_h", 22);
+  sleep_minute = prefs.getUChar("s_m", 0);
+  wake_hour = prefs.getUChar("w_h", 6);
+  wake_minute = prefs.getUChar("w_m", 0);
   prefs.end();
 
   if (stored_ssid.length() > 0) wifi_ssid = stored_ssid;
@@ -542,6 +568,10 @@ void save_wifi_credentials(const String &ssid, const String &password) {
   prefs.putString("ssid", ssid);
   prefs.putString("password", password);
   prefs.putULong("offline_s", 0);
+  prefs.putUChar("s_h", sleep_hour);
+  prefs.putUChar("s_m", sleep_minute);
+  prefs.putUChar("w_h", wake_hour);
+  prefs.putUChar("w_m", wake_minute);
   prefs.end();
   wifi_ssid = ssid;
   wifi_password = password;
@@ -564,7 +594,7 @@ bool wifi_portal_required() {
 String wifi_portal_page() {
   String page = R"HTML(<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Weather Monitor WiFi</title><style>body{font-family:system-ui;margin:2rem;max-width:28rem}input,button{box-sizing:border-box;width:100%;padding:.8rem;margin:.4rem 0 1rem;font-size:1rem}button{background:#1769aa;color:#fff;border:0;border-radius:4px}small{color:#555}</style></head><body><h2>Weather Monitor WiFi</h2><p>Enter the WiFi network for this device.</p><form method="POST" action="/save"><label>SSID</label><input name="ssid" required maxlength="32" value=")HTML";
   page += wifi_ssid;
-  page += R"HTML("><label>Password</label><input name="password" type="password" maxlength="64" placeholder="Leave blank for an open network"><button type="submit">Save and connect</button></form><small>The device will keep this network until changed here.</small></body></html>)HTML";
+  page += R"HTML("><label>Password</label><input name="password" type="password" maxlength="64" placeholder="Leave blank for an open network"><label>Sleep Time (HH:MM)</label><input name="sleep_time" type="time"><label>Wake Time (HH:MM)</label><input name="wake_time" type="time"><button type="submit">Save and connect</button></form><small>The device will keep this network until changed here.</small></body></html>)HTML";
   return page;
 }
 
@@ -582,10 +612,24 @@ void start_wifi_portal() {
   wifi_portal_server.on("/save", HTTP_POST, []() {
     String ssid = wifi_portal_server.arg("ssid");
     String password = wifi_portal_server.arg("password");
+    String sleep_time = wifi_portal_server.arg("sleep_time");
+    String wake_time = wifi_portal_server.arg("wake_time");
     ssid.trim();
+    password.trim();
+    sleep_time.trim();
+    wake_time.trim();
     if (ssid.length() == 0) {
       wifi_portal_server.send(400, "text/plain", "SSID is required");
       return;
+    }
+    // Parse HH:MM into hour/minute
+    if (sleep_time.length() >= 5) {
+      sleep_hour = sleep_time.substring(0, 2).toInt();
+      sleep_minute = sleep_time.substring(3, 5).toInt();
+    }
+    if (wake_time.length() >= 5) {
+      wake_hour = wake_time.substring(0, 2).toInt();
+      wake_minute = wake_time.substring(3, 5).toInt();
     }
     save_wifi_credentials(ssid, password);
     wifi_portal_reconnect = true;
@@ -733,6 +777,45 @@ void reset_device_identity() {
 
 // --- OFFLINE MODE FUNCTIONS ---
 
+// Offline nodes have no WiFi and usually no RTC, so time(nullptr) is invalid.
+// Keep a synthetic epoch in NVS that advances across deep-sleep cycles. This
+// guarantees offline records are stored with monotonically increasing
+// timestamps instead of being dropped entirely.
+static void save_offline_clock(unsigned long value) {
+  Preferences prefs;
+  prefs.begin("offline", false);
+  prefs.putULong("clock", value);
+  prefs.end();
+}
+
+void load_offline_clock() {
+  Preferences prefs;
+  prefs.begin("offline", true);
+  offline_clock_base = prefs.getULong("clock", 0);
+  prefs.end();
+
+  if (offline_clock_base < OFFLINE_EPOCH_BASE) offline_clock_base = OFFLINE_EPOCH_BASE;
+  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER) {
+    offline_clock_base += (unsigned long)(DEEP_SLEEP_DURATION_US / 1000000ULL);
+  }
+  LOGF("[offline] Clock base: %lu\n", offline_clock_base);
+}
+
+time_t get_record_timestamp() {
+  if (time_ok()) return get_epoch();
+  return (time_t)(offline_clock_base + millis() / 1000UL);
+}
+
+// Broken-down IST time backed by the synthetic clock when NTP/RTC is absent.
+// Lets the model detect day changes and seasonal features even offline.
+bool get_record_tm(struct tm* out) {
+  time_t e = get_record_timestamp();
+  if (e <= 1000000) return false;
+  e += 19800;                    // +5:30 IST, same convention as get_local_tm()
+  gmtime_r(&e, out);
+  return true;
+}
+
 void load_offline_mode() {
   Preferences prefs;
   prefs.begin("offline", true);
@@ -756,6 +839,12 @@ void load_inference_history() {
   prefs.begin("inference", true);
   inference_count = prefs.getInt("count", 0);
   inference_head = prefs.getInt("head", 0);
+
+  if (inference_count < 0) inference_count = 0;
+  if (inference_count > MAX_INFERENCE_RECORDS) inference_count = MAX_INFERENCE_RECORDS;
+  if (inference_head < 0 || inference_head >= MAX_INFERENCE_RECORDS) inference_head = 0;
+  if (inference_count == 0) inference_head = 0;
+
   for (int i = 0; i < MAX_INFERENCE_RECORDS; i++) {
     String key = "rec" + String(i);
     size_t len = prefs.getBytesLength(key.c_str());
@@ -766,36 +855,66 @@ void load_inference_history() {
     }
   }
   prefs.end();
+
+  // Older firmware wrote each record under the *next* slot's key, so an
+  // upgraded device can have count/head pointing at an empty slot. Drop that
+  // unusable history instead of serving an empty "latest" record forever.
+  if (inference_count > 0) {
+    int latest = (inference_head - 1 + MAX_INFERENCE_RECORDS) % MAX_INFERENCE_RECORDS;
+    if (!inference_history[latest].valid) {
+      LOGLN("[offline] Inconsistent stored history detected - starting a new ring");
+      inference_count = 0;
+      inference_head = 0;
+      Preferences repair;
+      repair.begin("inference", false);
+      repair.putInt("count", 0);
+      repair.putInt("head", 0);
+      repair.end();
+    }
+  }
+
   LOGF("[offline] Loaded %d inference records\n", inference_count);
 }
 
 void save_inference_record(const InferenceRecord &rec) {
   Preferences prefs;
   prefs.begin("inference", false);
-  
-  inference_history[inference_head] = rec;
-  inference_head = (inference_head + 1) % MAX_INFERENCE_RECORDS;
+
+  // head is the slot being written. Persist exactly that slot (the old code
+  // wrote it under the *next* slot's key, which corrupted history on reboot).
+  int slot = inference_head;
+  inference_history[slot] = rec;
+  inference_head = (slot + 1) % MAX_INFERENCE_RECORDS;
   if (inference_count < MAX_INFERENCE_RECORDS) inference_count++;
-  
+
+  String key = "rec" + String(slot);
+  prefs.putBytes(key.c_str(), &rec, sizeof(InferenceRecord));
   prefs.putInt("count", inference_count);
   prefs.putInt("head", inference_head);
-  
-  String key = "rec" + String(inference_head);
-  prefs.putBytes(key.c_str(), &rec, sizeof(InferenceRecord));
-  
+
   prefs.end();
-  LOGF("[offline] Saved inference record #%d (total: %d)\n", inference_head, inference_count);
+  LOGF("[offline] Saved inference record #%d (total: %d)\n", slot, inference_count);
 }
 
 void store_current_inference() {
-  if (!time_ok()) return;
-  
+  if (isnan(temp) || isnan(humidity) || isnan(pressure)) {
+    LOGLN("[offline] Skipping record: sensors not ready");
+    return;
+  }
+
+  // Normal offline wake: first stable reading is stored. While the hotspot is
+  // up, throttle so flash isn't written every sensor cycle.
+  unsigned long now = millis();
+  if (last_inference_store != 0 && now - last_inference_store < INFERENCE_STORE_INTERVAL) {
+    return;
+  }
+
   InferenceRecord rec;
-  rec.ts = get_epoch();
+  rec.ts = (long)get_record_timestamp();   // synthetic clock when no RTC/NTP
   rec.temp = temp;
   rec.humidity = humidity;
   rec.pressure = pressure;
-  
+
   if (fb_mutex && xSemaphoreTake(fb_mutex, 100)) {
     rec.currentWeatherCode = currentWeatherCode;
     rec.forecastCodes[0] = forecastCodes[0];
@@ -807,12 +926,14 @@ void store_current_inference() {
     rec.forecastCodes[0] = rec.forecastCodes[1] = rec.forecastCodes[2] = -1;
   }
   rec.valid = true;
-  
+
   save_inference_record(rec);
+  last_inference_store = now;
+  inference_stored_this_wake = true;
 }
 
 void handle_hotspot_api() {
-  DynamicJsonDocument doc(8192);
+  DynamicJsonDocument doc(24576);   // 50 records + nested forecast arrays
   JsonObject latest = doc.createNestedObject("latest");
   JsonArray forecast = doc.createNestedArray("forecast");
   JsonArray history = doc.createNestedArray("history");
@@ -869,8 +990,13 @@ void handle_hotspot_api() {
   doc["uptime"] = millis();
   doc["freeHeap"] = ESP.getFreeHeap();
   
+  if (doc.overflowed()) {
+    LOGLN("[hotspot] WARNING: API JSON overflowed, response was truncated");
+  }
+
   String output;
   serializeJson(doc, output);
+  hotspot_server.sendHeader("Cache-Control", "no-store");
   hotspot_server.send(200, "application/json", output);
 }
 
@@ -888,7 +1014,6 @@ void start_hotspot_mode() {
   // Stop any existing WiFi
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
-  delay(100);
   
   // Start AP mode
   String ap_name = String(HOTSPOT_SSID_PREFIX) + device_id.substring(6);
@@ -943,42 +1068,42 @@ void check_hotspot_timeout() {
 }
 
 void draw_hotspot_screen() {
-  u8g2.clearBuffer();
-  
   String ap_name = String(HOTSPOT_SSID_PREFIX) + device_id.substring(6);
-  
-  // Title
-  u8g2.setFont(u8g2_font_profont11_tr);
-  u8g2.drawStr(2, 10, "HOTSPOT ACTIVE");
-  u8g2.drawHLine(0, 14, 128);
-  
-  // Hotspot name
-  u8g2.setFont(u8g2_font_profont10_tr);
-  u8g2.drawStr(2, 26, "Hosting inference");
-  u8g2.drawStr(2, 36, "data in hotspot:");
-  u8g2.setFont(u8g2_font_profont11_tr);
-  
-  // SSID (may need truncation)
-  String ssid_display = ap_name;
-  if (u8g2.getStrWidth(ssid_display.c_str()) > 124) {
-    ssid_display = ssid_display.substring(0, 16) + "..";
-  }
-  u8g2.drawStr(2, 48, ssid_display.c_str());
-  
-  // Password hint
-  u8g2.setFont(u8g2_font_profont10_tr);
-  u8g2.drawStr(2, 56, "Pass: weather123");
-  
-  // Client count
-  char clientBuf[32];
-  sprintf(clientBuf, "Clients: %d", connected_station_count);
-  u8g2.drawStr(2, 62, clientBuf);
-  
-  // Bottom hint
-  u8g2.setFont(u8g2_font_4x6_tf);
-  u8g2.drawStr(2, 64, "Long press to exit | Auto-off in 10min if no clients");
-  
-  u8g2.sendBuffer();
+
+  // Page-buffer UI: every draw must happen inside firstPage()/nextPage().
+  u8g2.firstPage();
+  do {
+    // Title
+    u8g2.setFont(u8g2_font_profont11_tr);
+    u8g2.drawStr(2, 10, "HOTSPOT ACTIVE");
+    u8g2.drawHLine(0, 14, 128);
+
+    // Hotspot name
+    u8g2.setFont(u8g2_font_profont10_tr);
+    u8g2.drawStr(2, 22, "Hosting inference");
+    u8g2.drawStr(2, 31, "data in hotspot:");
+    u8g2.setFont(u8g2_font_profont11_tr);
+
+    // SSID (may need truncation)
+    String ssid_display = ap_name;
+    if (u8g2.getStrWidth(ssid_display.c_str()) > 124) {
+      ssid_display = ssid_display.substring(0, 16) + "..";
+    }
+    u8g2.drawStr(2, 42, ssid_display.c_str());
+
+    // Password hint (only shown if hotspot is password-protected)
+    u8g2.setFont(u8g2_font_profont10_tr);
+    if (strlen(HOTSPOT_PASSWORD) > 0) {
+      u8g2.drawStr(2, 51, "Pass: weather123");
+    } else {
+      u8g2.drawStr(2, 51, "Open (no password)");
+    }
+
+    // Client count
+    char clientBuf[32];
+    sprintf(clientBuf, "Clients: %d", connected_station_count);
+    u8g2.drawStr(2, 62, clientBuf);
+  } while (u8g2.nextPage());
 }
 
 // Check whether the owner unpaired this device on the dashboard: the claim
@@ -1052,50 +1177,201 @@ bool check_remote_provisioning() {
   return claimed;
 }
 
+static bool valid_temp(float v)  { return !isnan(v) && v > -45.0F && v < 90.0F; }
+static bool valid_hum(float v)   { return !isnan(v) && v >= 0.0F && v <= 100.0F; }
+static bool valid_press(float v) { return !isnan(v) && v >= 250.0F && v <= 1200.0F; }
+
+// Rejects one-off spikes (median of the last 3 samples) and then lightly
+// smooths the result. A failed conversion never overwrites the last good value.
+struct ReadingFilter {
+  static const uint8_t N = 3;
+  float buf[N] = {NAN, NAN, NAN};
+  uint8_t next = 0;
+  uint8_t count = 0;
+  bool have = false;
+  float value = NAN;
+
+  void reset() {
+    next = count = 0;
+    have = false;
+    value = NAN;
+    for (uint8_t i = 0; i < N; i++) buf[i] = NAN;
+  }
+
+  float add(float v) {
+    buf[next] = v;
+    next = (next + 1) % N;
+    if (count < N) count++;
+
+    float sorted[N];
+    for (uint8_t i = 0; i < count; i++) sorted[i] = buf[i];
+    for (uint8_t i = 0; i < count; i++) {
+      for (uint8_t j = i + 1; j < count; j++) {
+        if (sorted[j] < sorted[i]) {
+          float tmp = sorted[i];
+          sorted[i] = sorted[j];
+          sorted[j] = tmp;
+        }
+      }
+    }
+    float median = (count == 1) ? sorted[0]
+                 : (count == 2) ? (sorted[0] + sorted[1]) * 0.5F
+                 : sorted[1];
+
+    if (!have) {
+      value = median;
+      have = true;
+    } else {
+      value += 0.5F * (median - value);
+    }
+    return value;
+  }
+
+  float get() const { return have ? value : NAN; }
+};
+
+static ReadingFilter filter_temp;
+static ReadingFilter filter_hum;
+static ReadingFilter filter_press;
+static unsigned long last_valid_reading_ms = 0;
+
+void reset_sensor_filters() {
+  filter_temp.reset();
+  filter_hum.reset();
+  filter_press.reset();
+  last_valid_reading_ms = millis();
+}
+
 void read_sensors() {
-  temp = NAN;
-  humidity = NAN;
-  pressure = NAN;
-  bool bme680_ok = false;
+  float t = NAN, h = NAN, p = NAN, pressure_temp = NAN;
+  bool pressure_done = false;
+  bool got_any = false;
+  bool got_i2c = false;
+  bool has_i2c = (pressure_sensor != PressureSensor::NONE) ||
+                 (humidity_sensor == HumiditySensor::AHT20) ||
+                 (humidity_sensor == HumiditySensor::BME280) ||
+                 (humidity_sensor == HumiditySensor::BME680);
 
   if (humidity_sensor == HumiditySensor::DHT11) {
-    temp = dht.readTemperature();
-    humidity = dht.readHumidity();
+    float rt = dht.readTemperature();
+    float rh = dht.readHumidity();
+    if (valid_temp(rt)) t = rt;
+    if (valid_hum(rh)) h = rh;
   } else if (humidity_sensor == HumiditySensor::AHT20) {
     sensors_event_t humidity_event, temperature_event;
-    aht.getEvent(&humidity_event, &temperature_event);
-    temp = temperature_event.temperature;
-    humidity = humidity_event.relative_humidity;
+    if (aht.getEvent(&humidity_event, &temperature_event)) {
+      if (valid_temp(temperature_event.temperature)) t = temperature_event.temperature;
+      if (valid_hum(humidity_event.relative_humidity)) h = humidity_event.relative_humidity;
+      got_i2c = valid_temp(t) || valid_hum(h);
+    }
   } else if (humidity_sensor == HumiditySensor::BME280) {
-    temp = bme.readTemperature();
-    humidity = bme.readHumidity();
+    float rt = bme.readTemperature();
+    float rh = bme.readHumidity();
+    if (valid_temp(rt)) t = rt;
+    if (valid_hum(rh)) h = rh;
+    got_i2c = valid_temp(t) || valid_hum(h);
   } else if (humidity_sensor == HumiditySensor::BME680) {
-    bme680_ok = bme680.performReading();
-    if (bme680_ok) {
-      temp = bme680.temperature;
-      humidity = bme680.humidity;
+    if (bme680.performReading()) {
+      got_i2c = true;
+      if (valid_temp(bme680.temperature)) t = bme680.temperature;
+      if (valid_hum(bme680.humidity)) h = bme680.humidity;
+      if (valid_press(bme680.pressure / 100.0F)) {
+        p = bme680.pressure / 100.0F;
+        pressure_done = true;
+      }
+      if (gas_sensor == GasSensor::BME680 && bme680.gas_resistance > 0) {
+        gas_resistance_kohm = bme680.gas_resistance / 1000.0F;
+        air_quality_index = estimate_air_quality(gas_resistance_kohm);
+      }
     }
   }
 
-  if (pressure_sensor == PressureSensor::BMP180) {
-    temp = bmp.readTemperature();
-    pressure = bmp.readPressure() / 100.0F;
-  } else if (pressure_sensor == PressureSensor::BMP280) {
-    temp = bmp280.readTemperature();
-    pressure = bmp280.readPressure() / 100.0F;
-  } else if (pressure_sensor == PressureSensor::BME280) {
-    temp = bme.readTemperature();
-    pressure = bme.readPressure() / 100.0F;
-  } else if (pressure_sensor == PressureSensor::BME680 && bme680_ok) {
-    pressure = bme680.pressure / 100.0F; // already updated by performReading() above
+  if (!pressure_done) {
+    if (pressure_sensor == PressureSensor::BMP180) {
+      pressure_temp = bmp.readTemperature();
+      p = bmp.readPressure() / 100.0F;
+    } else if (pressure_sensor == PressureSensor::BMP280) {
+      pressure_temp = bmp280.readTemperature();
+      p = bmp280.readPressure() / 100.0F;
+    } else if (pressure_sensor == PressureSensor::BME280) {
+      pressure_temp = bme.readTemperature();
+      p = bme.readPressure() / 100.0F;
+    } else if (pressure_sensor == PressureSensor::BME680) {
+      // BME680 read above; performReading() failed this cycle, keep last values.
+    }
+    if (valid_press(p)) got_i2c = true;
   }
 
-  if (gas_sensor == GasSensor::BME680 && bme680_ok) {
-    gas_resistance_kohm = bme680.gas_resistance / 1000.0F;
-    air_quality_index = estimate_air_quality(gas_resistance_kohm);
+  // Prefer the humidity sensor's temperature. Only fall back to the pressure
+  // sensor when it is actually producing a valid pressure reading (some boards
+  // return 0.0 on a failed conversion, which must not appear as 0 C).
+  if (!valid_temp(t) && valid_press(p) && valid_temp(pressure_temp)) t = pressure_temp;
+
+  if (valid_temp(t)) {
+    filter_temp.add(t);
+    got_any = true;
   }
+  if (valid_hum(h)) {
+    filter_hum.add(h);
+    got_any = true;
+  }
+  if (valid_press(p)) {
+    filter_press.add(p);
+    got_any = true;
+  }
+
+  unsigned long now = millis();
+  if (got_any) last_valid_reading_ms = now;
+  if (got_i2c || !has_i2c) {
+    sensor_fail_streak = 0;
+  } else if (sensor_fail_streak < 255) {
+    sensor_fail_streak++;
+  }
+  if (!got_any && last_valid_reading_ms != 0 && now - last_valid_reading_ms > 120000UL) {
+    // Sensor(s) gone for two minutes: stop showing stale values.
+    filter_temp.reset();
+    filter_hum.reset();
+    filter_press.reset();
+    last_valid_reading_ms = now;
+  }
+
+  // No new sample this cycle -> the filters return their last good value.
+  temp = filter_temp.get();
+  humidity = filter_hum.get();
+  pressure = filter_press.get();
 
   bmp_present = pressure_sensor != PressureSensor::NONE;
+}
+
+// A sensor powered down mid-transaction can hold SDA low and wedge the bus.
+// Clock it free (9 pulses + STOP), then re-init and re-detect the sensors.
+static void recover_i2c_bus() {
+  LOGLN("[i2c] Bus appears stuck - attempting recovery");
+  Wire.end();
+  pinMode(I2C_SDA, OUTPUT_OPEN_DRAIN);
+  pinMode(I2C_SCL, OUTPUT_OPEN_DRAIN);
+  digitalWrite(I2C_SDA, HIGH);
+  digitalWrite(I2C_SCL, HIGH);
+  delayMicroseconds(10);
+  for (uint8_t i = 0; i < 9; i++) {
+    digitalWrite(I2C_SCL, LOW);
+    delayMicroseconds(5);
+    digitalWrite(I2C_SCL, HIGH);
+    delayMicroseconds(5);
+  }
+  digitalWrite(I2C_SDA, LOW);
+  delayMicroseconds(5);
+  digitalWrite(I2C_SCL, HIGH);
+  delayMicroseconds(5);
+  digitalWrite(I2C_SDA, HIGH);
+  delayMicroseconds(5);
+
+  Wire.begin(I2C_SDA, I2C_SCL);
+  Wire.setClock(100000);
+  Wire.setTimeOut(50);
+  detect_sensors();
+  reset_sensor_filters();
+  sensor_fail_streak = 0;
 }
 
 void print_sensor_data(){
@@ -1374,6 +1650,18 @@ void enterDeepSleep() {
   }
 
   LOGLN("[sleep] Entering Deep Sleep. Goodnight!");
+  if (offline_mode) {
+    LOGF("[offline] Record stored this wake: %s\n",
+         inference_stored_this_wake ? "yes" : "no");
+  }
+
+  // Remember wall-clock time at sleep so an offline node can keep stamping
+  // records after it wakes without WiFi/RTC.
+  unsigned long clock_at_sleep = time_ok()
+      ? (unsigned long)get_epoch()
+      : offline_clock_base + millis() / 1000UL;
+  save_offline_clock(clock_at_sleep);
+
 #if !HEADLESS_MODE
   u8g2.setPowerSave(1); // Turn OLED off (driver-agnostic)
 #endif
@@ -1383,7 +1671,7 @@ pinMode(WAKE_BUTTON_PIN, INPUT_PULLUP);
   esp_deep_sleep_enable_gpio_wakeup(1ULL << WAKE_BUTTON_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
   
   // Enable wake up via timer
-  esp_sleep_enable_timer_wakeup(DEEP_SLEEP_DURATION_US);  
+  esp_sleep_enable_timer_wakeup(configured_sleep_duration_us);
    
   // Go to sleep. ESP32 will completely reset upon waking up.
   esp_deep_sleep_start(); 
@@ -1407,7 +1695,10 @@ void draw_screen_one() {
       }
       struct tm t;
       if (!get_local_tm(&t)) {
-        u8g2.drawStr(2, 10, "Time Not Set");
+        char upBuf[20];
+        unsigned long s = millis() / 1000UL;
+        sprintf(upBuf, "Up %02lu:%02lu:%02lu", (s / 3600) % 100, (s / 60) % 60, s % 60);
+        u8g2.drawStr(2, 10, upBuf);
       } else {
         char timeBuf[25];
         sprintf(timeBuf, "%02d:%02d:%02d  %02d/%02d", t.tm_hour, t.tm_min, t.tm_sec, t.tm_mday, t.tm_mon + 1);
@@ -1417,7 +1708,10 @@ void draw_screen_one() {
 #else
   struct tm t;
   if (!get_local_tm(&t)) {
-    u8g2.drawStr(2, 10, "Time Not Set");
+    char upBuf[20];
+    unsigned long s = millis() / 1000UL;
+    sprintf(upBuf, "Up %02lu:%02lu:%02lu", (s / 3600) % 100, (s / 60) % 60, s % 60);
+    u8g2.drawStr(2, 10, upBuf);
   } else {
     char timeBuf[25];
     sprintf(timeBuf, "%02d:%02d:%02d  %02d/%02d", t.tm_hour, t.tm_min, t.tm_sec, t.tm_mday, t.tm_mon + 1);
@@ -1427,7 +1721,7 @@ void draw_screen_one() {
     
     u8g2.drawHLine(0, 14, 128);
 
-    if (temp >= 0 || temp <= 108) {
+    if (!isnan(temp)) {
       u8g2.setFont(u8g2_font_logisoso22_tr); 
       char tempBuf[10];
       sprintf(tempBuf, "%.1f", temp);
@@ -1479,8 +1773,6 @@ void draw_screen_two() {
 }
 
 void draw_screen_three() {
-    u8g2.clearBuffer();
-
     int localCurrent = currentWeatherCode;
     int localForecast[3] = {-1, -1, -1};
     if (xSemaphoreTake(fb_mutex, 100)) {
@@ -1510,8 +1802,8 @@ void draw_screen_three() {
     u8g2.drawHLine(0, 30, 128);
 
     // --- BOTTOM: TODAY STATUS ---
-    // Big Icon
-    u8g2.drawXBMP(10, 36, 32, 32, getBigIcon(localCurrent));
+    // Big Icon (32px tall; y=32 keeps the bottom row on the 64px panel)
+    u8g2.drawXBMP(10, 32, 32, 32, getBigIcon(localCurrent));
     
     // Status Text
     u8g2.setFont(u8g2_font_profont11_tf);
@@ -1522,8 +1814,6 @@ void draw_screen_three() {
       u8g2.setFont(u8g2_font_profont10_tf);
     }
     u8g2.drawStr(50, 62, desc);
-    
-    u8g2.sendBuffer();
 }
 
 // Fourth screen - only reached when a BME680 is fitted (see the screen-count
@@ -1546,8 +1836,9 @@ void draw_screen_four() {
       u8g2.drawStr(80, 32, label);
 
       char gasBuf[20];
-      sprintf(gasBuf, "%.0f kOhm", gas_resistance_kohm);
-      u8g2.drawStr(80, 48, gasBuf);
+      sprintf(gasBuf, "Gas: %.0f kOhm", gas_resistance_kohm);
+      u8g2.setFont(u8g2_font_profont10_tr);
+      u8g2.drawStr(2, 62, gasBuf);
     } else {
       u8g2.drawStr(10, 35, "Warming up...");
     }
@@ -1690,7 +1981,6 @@ void setup() {
   } else {
     LOGLN("[boot] Cold Boot");
   }
-  delay(100);
   pinMode(I2C_SDA, INPUT);
   pinMode(I2C_SCL, INPUT);
 
@@ -1702,6 +1992,8 @@ void setup() {
   });
 
   Wire.begin(I2C_SDA, I2C_SCL);
+  Wire.setClock(100000);   // 100 kHz is the most tolerant of long/cheap wiring
+  Wire.setTimeOut(50);     // don't let one missing device block the loop for long
   
 #if RTC_SUPPORT
   // RTC is OPTIONAL: if no DS3231 on the bus we still run off NTP/system time.
@@ -1738,8 +2030,7 @@ void setup() {
   }
 
 #if !HEADLESS_MODE
-  u8g2.clearBuffer();
-
+  u8g2.firstPage();
   do {
       const int logoX = (128 - 64) / 2;
       const int logoY = 0;
@@ -1751,14 +2042,14 @@ void setup() {
       int titleX = (128 - titleWidth) / 2;
       u8g2.drawStr(titleX, 64, title);
   } while (u8g2.nextPage());
-  
-  delay(200); 
 #endif
   // Initial read & sync process before UI starts cycling
   
   // Load offline mode setting
   load_offline_mode();
   load_inference_history();
+  load_offline_clock();
+  reset_sensor_filters();
   
   device_id = get_device_id();
   device_key = get_stored_device_key();
@@ -1774,6 +2065,9 @@ void setup() {
   LOGF("[provision] Device ID (MAC): %s\n", device_id.c_str());
   LOGF("[offline] Offline mode: %s (compile-time: %d)\n", offline_mode ? "ENABLED" : "DISABLED", OFFLINE_MODE_ENABLED);
   
+  // Setup button for press detection (works in both offline and online mode)
+  pinMode(WAKE_BUTTON_PIN, INPUT_PULLUP);
+
   if (offline_mode) {
     // OFFLINE MODE: Never connect to WiFi, no radio
     LOGLN("[offline] Offline mode active - WiFi disabled");
@@ -1783,15 +2077,11 @@ void setup() {
     // Initial sensor read (model will run in loop after readings stabilize)
     read_sensors();
     print_sensor_data();
-    
-    // Setup button for triple-press detection
-    pinMode(WAKE_BUTTON_PIN, INPUT_PULLUP);
   } else {
     // NORMAL MODE: Connect to WiFi
     esp_wifi_set_ps(WIFI_PS_NONE);
     WiFi.mode(WIFI_STA);
-    WiFi.begin();   
-    delay(500);
+    WiFi.begin();
     load_wifi_credentials();
     
     check_wifi_status();
@@ -1835,45 +2125,92 @@ void setup() {
   boot_done = millis();      // awake clock starts AFTER setup completes
 }
 
+// Run the local model exactly once per wake, after readings have settled.
+// The 15 s deadline guarantees a prediction even if the sensor never gets
+// perfectly quiet (DHT11 has 1 C / 1 % resolution, so waiting forever for a
+// smaller delta would leave the forecast screen empty).
+static void service_predictions(unsigned long now) {
+  if (!stable_prediction_done) {
+    bool all_valid = !isnan(temp) && !isnan(humidity) && !isnan(pressure);
+    if (all_valid) {
+      bool steady = !isnan(prev_temp) &&
+                    fabs(temp - prev_temp) < 0.3F &&
+                    fabs(humidity - prev_hum) < 1.0F &&
+                    fabs(pressure - prev_pres) < 0.5F;
+      if (steady) stable_count++;
+      else stable_count = 0;
+
+      bool deadline = (now - boot_done > 15000UL);
+      if (stable_count >= 3 || (deadline && stable_count >= 1)) {
+        stable_prediction_done = true;
+        run_local_prediction();
+        store_current_inference();
+        LOGF("[sensor] Prediction ready (%d stable samples)\n", stable_count);
+      }
+    } else {
+      stable_count = 0;
+    }
+  }
+
+  prev_temp = temp;
+  prev_hum = humidity;
+  prev_pres = pressure;
+}
+
 void loop() {
   unsigned long now = millis();
 
   // --- BUTTON HANDLING (works in both offline and online modes) ---
   bool button_state = digitalRead(WAKE_BUTTON_PIN) == LOW; // Active low with pullup
-  
-  if (button_state && !button_held) {
-    // Button just pressed
-    button_held = true;
-    button_press_start = now;
-    
-    if (button_press_count == 0) {
-      first_press_time = now;
-    }
-    button_press_count++;
-    LOGF("[button] Press #%d\n", button_press_count);
-  } else if (!button_state && button_held) {
-    // Button released
-    button_held = false;
-    unsigned long press_duration = now - button_press_start;
-    
-    // Check for long press (2 seconds)
-    if (press_duration >= BUTTON_LONG_PRESS_DURATION) {
-      LOGLN("[button] Long press detected");
-      if (hotspot_active) {
-        stop_hotspot_mode();
-        hotspot_mode_triggered = false;
+
+  // Debounce: only register a state change if enough time has passed since the last event
+  if ((now - last_button_event) >= BUTTON_DEBOUNCE_MS) {
+    if (button_state != button_held) {
+      last_button_event = now;
+
+      if (button_state && !button_held) {
+        // Button just pressed
+        button_held = true;
+        button_press_start = now;
+
+        // (Re)start the multi-press window on every press so the timeout
+        // measures the gap between presses, not the time from press #1.
+        first_press_time = now;
+        button_press_count++;
+        LOGF("[button] Press #%d\n", button_press_count);
+      } else if (!button_state && button_held) {
+        // Button released
+        button_held = false;
+        unsigned long press_duration = now - button_press_start;
+
+        // Check for long press (2 seconds)
+        if (press_duration >= BUTTON_LONG_PRESS_DURATION) {
+          LOGLN("[button] Long press detected");
+          if (hotspot_active) {
+            stop_hotspot_mode();
+            hotspot_mode_triggered = false;
+          }
+          button_press_count = 0;
+        }
       }
-      button_press_count = 0;
     }
   }
-  
-  // Check for triple press timeout
-  if (button_press_count > 0 && (now - first_press_time > BUTTON_TRIPLE_PRESS_WINDOW)) {
-    if (button_press_count >= 3) {
-      LOGLN("[button] Triple press detected - entering hotspot mode");
-      if (offline_mode && !hotspot_active) {
+
+  // Check for multi-press timeout
+  if (button_press_count > 0 && (now - first_press_time > BUTTON_MULTI_PRESS_WINDOW)) {
+    LOGF("[button] timeout: count=%d offline=%d\n", button_press_count, offline_mode ? 1 : 0);
+    if (offline_mode) {
+      // Offline mode: 3 presses enters hotspot mode
+      if (button_press_count >= 3 && !hotspot_active) {
+        LOGLN("[button] Triple press detected - entering hotspot mode");
         hotspot_mode_triggered = true;
         start_hotspot_mode();
+      }
+    } else {
+      // Online mode: 5 presses opens the WiFi config portal
+      if (button_press_count >= 5 && !wifi_portal_active && !hotspot_active) {
+        LOGLN("[button] 5 presses detected - opening WiFi config portal");
+        start_wifi_portal();
       }
     }
     button_press_count = 0;
@@ -1886,10 +2223,9 @@ void loop() {
     
     // Show hotspot screen
     #if !HEADLESS_MODE
-    if (gui_dirty || now - lastguiupdate >= 1000) {
+    if (now - lastguiupdate >= 1000) {
       draw_hotspot_screen();
       lastguiupdate = now;
-      gui_dirty = false;
     }
     #endif
     
@@ -1915,31 +2251,22 @@ void loop() {
     return;
   }
 
+  // A slow-rising I2C bus can make the first detection miss a sensor. Retry
+  // twice during the awake window instead of staying sensor-less until reboot.
+  if (pressure_sensor == PressureSensor::NONE && sensor_redetect_attempts < 2 &&
+      (now - boot_done) >= (unsigned long)(sensor_redetect_attempts + 1) * 10000UL) {
+    sensor_redetect_attempts++;
+    LOGF("[sensor] Detection retry %u...\n", sensor_redetect_attempts);
+    detect_sensors();
+    reset_sensor_filters();   // sensor set may have changed
+  }
+
   // --- OFFLINE MODE: Periodic sensor reading and inference ---
   if (offline_mode) {
     if (now - lastsensorupdate >= SENSOR_UPDATE) {
       lastsensorupdate = now;
       read_sensors();
-      
-      // Run local model once the readings settle
-      if (!stable_prediction_done) {
-        if (!isnan(temp) && !isnan(humidity) && !isnan(pressure) && !isnan(prev_temp) &&
-            fabs(temp - prev_temp) < 0.3F &&
-            fabs(humidity - prev_hum) < 1.0F &&
-            fabs(pressure - prev_pres) < 0.5F) {
-          stable_count++;
-          if (stable_count >= 3) {
-            stable_prediction_done = true;
-            run_local_prediction();
-            store_current_inference();
-          }
-        } else {
-          stable_count = 0;
-        }
-      }
-      prev_temp = temp;
-      prev_hum = humidity;
-      prev_pres = pressure;
+      service_predictions(now);
     }
   } else {
     // --- ONLINE MODE: Normal sensor reading ---
@@ -1949,63 +2276,46 @@ void loop() {
       if (device_claimed) {
         read_sensors();
         print_sensor_data();
-
-        // Run local model once the readings settle (data no longer changing)
-        if (!stable_prediction_done) {
-          if (!isnan(temp) && !isnan(humidity) && !isnan(pressure) && !isnan(prev_temp) &&
-              fabs(temp - prev_temp) < 0.3F &&
-              fabs(humidity - prev_hum) < 1.0F &&
-              fabs(pressure - prev_pres) < 0.5F) {
-            stable_count++;
-            if (stable_count >= 3) {
-              stable_prediction_done = true;
-              run_local_prediction();
-              store_current_inference(); // Also store in flash for offline access
-            }
-          } else {
-            stable_count = 0;
-          }
-        }
-        prev_temp = temp;
-        prev_hum = humidity;
-        prev_pres = pressure;
+        service_predictions(now);
       }
     }
   }
 
+  // Five consecutive empty read cycles (~10 s) points at a wedged I2C bus
+  // rather than a single bad sample. Recover once per wake.
+  bool i2c_sensors = (pressure_sensor != PressureSensor::NONE) ||
+                     (humidity_sensor != HumiditySensor::DHT11);
+  if (sensor_fail_streak >= 5 && !i2c_recovery_done && i2c_sensors) {
+    i2c_recovery_done = true;
+    recover_i2c_bus();
+  }
+
   // 2. Screen Transitions
+  // Auto-rotate through the screens every SCREEN_DURATION so time, WiFi, forecast
+  // and (optionally) air-quality each get a turn. Screen 0 shows real time.
   if (now - last_screen_switch >= SCREEN_DURATION) {
     if (offline_mode) {
       // In offline mode, cycle through sensor screens only
       int last_screen = (gas_sensor != GasSensor::NONE) ? 2 : 1; // 0: main, 1: forecast, (2: air quality if BME680)
       current_screen++;
       if (current_screen > last_screen) current_screen = 0;
-      // Only run model on forecast screen if it hasn't run with stable readings yet
-      if (current_screen == 1 && !stable_prediction_done) {
-        run_local_prediction();
-      }
     } else if (!device_claimed) {
       current_screen = (current_screen == 0) ? 1 : 0; // instructions <-> QR
     } else {
       int last_screen = (gas_sensor != GasSensor::NONE) ? 3 : 2; // +1 screen (Air Quality) with a BME680
-      if (offline_mode) last_screen = 2; // In offline mode, show fewer screens
       current_screen++;
       if (current_screen > last_screen) current_screen = 0;
-      // Re-run local model whenever the forecast/prediction screen is shown
-      if (current_screen == 2) {
-        run_local_prediction();
-      }
     }
     last_screen_switch = now;
-    gui_dirty = true;
   }
 
   // 3. Update OLED
 #if !HEADLESS_MODE
-  if (gui_dirty || ((offline_mode || device_claimed) && (now - lastguiupdate >= OLED_UPDATE))) {
+  // Always redraw at OLED_UPDATE (500 ms) regardless of pairing/claim state so
+  // the clock seconds tick smoothly and sensor values stay fresh on every screen.
+  if (now - lastguiupdate >= OLED_UPDATE) {
       update_gui();
       lastguiupdate = now;
-      gui_dirty = false;
   }
 #endif
 
@@ -2046,7 +2356,6 @@ void loop() {
         if (wifi_available) {
           LOGLN("[wifi] Connected - syncing time.");
           sync_time();
-          gui_dirty = true;    // refresh the info screen status
         }
       }
       if (wifi_available) {
@@ -2054,8 +2363,7 @@ void loop() {
           LOGLN("[provision] Claimed while awake - resuming normal operation.");
           fb_sync_first = true;      // sync on the next loop pass
           sleep_triggered = false;
-          gui_dirty = true;          // redraw normal screens immediately
-          lastguiupdate = 0;
+          lastguiupdate = 0;         // force an immediate redraw on the next loop
           boot_done = millis();      // restart the 20s awake window before sleeping
         }
       }
@@ -2073,12 +2381,47 @@ void loop() {
 
   // 6. Deep Sleep Trigger (Happens after staying awake for AWAKE_DURATION)
   //    Only when paired - an unclaimed node stays awake showing the QR code.
-  //    In offline mode, also sleep after AWAKE_DURATION unless hotspot is active
-  bool can_sleep = !sleep_triggered && device_claimed;
+  //    In offline mode, sleep after the full awake window so both screens stay
+  //    readable; the record is stored around 8-15 s in, well before sleep.
+  // Never sleep while a hotspot is active with a connected client
+  bool can_sleep = !sleep_triggered && device_claimed &&
+                   !(hotspot_active && connected_station_count > 0);
   if (offline_mode) {
     can_sleep = !sleep_triggered && !hotspot_active && (connected_station_count == 0);
   }
-  
+
+  // Sleep / wake schedule: if a valid time is available and we are inside the
+  // configured sleep window, compute how long to sleep until the wake time.
+  // Outside the window we fall back to the default deep-sleep duration.
+  bool in_sleep_window = false;
+  if (time_ok()) {
+    struct tm t;
+    if (get_local_tm(&t)) {
+      int now_min = t.tm_hour * 60 + t.tm_min;
+      int sleep_min = sleep_hour * 60 + sleep_minute;
+      int wake_min = wake_hour * 60 + wake_minute;
+      if (sleep_min != wake_min) {
+        if (sleep_min < wake_min) {
+          in_sleep_window = (now_min >= sleep_min && now_min < wake_min);
+        } else {
+          // Overnight window, e.g. 22:00 -> 06:00 next day
+          in_sleep_window = (now_min >= sleep_min || now_min < wake_min);
+        }
+      }
+    }
+  }
+  if (in_sleep_window) {
+    struct tm t;
+    get_local_tm(&t);
+    int now_min = t.tm_hour * 60 + t.tm_min;
+    int wake_min = wake_hour * 60 + wake_minute;
+    int mins_to_wake = wake_min - now_min;
+    if (mins_to_wake <= 0) mins_to_wake += 24 * 60;
+    configured_sleep_duration_us = (uint64_t)mins_to_wake * 60ULL * 1000000ULL;
+  } else {
+    configured_sleep_duration_us = DEEP_SLEEP_DURATION_US;
+  }
+
   if (can_sleep && (now - boot_done > AWAKE_DURATION)) {
      sleep_triggered = true;
      enterDeepSleep();
