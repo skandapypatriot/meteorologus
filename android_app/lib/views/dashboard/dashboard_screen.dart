@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart' hide AuthProvider;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
@@ -21,6 +22,7 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   final PageController _pageController = PageController();
   int _currentPage = 0;
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   @override
   void initState() {
@@ -46,13 +48,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  /// Mirrors the dashboard's "Unpair this device": deletes the node's history,
-  /// revokes the claim and drops it from the owner's list. The node erases its
-  /// own credentials on the next wake and returns to QR pairing mode.
-  Future<void> _unpairSelectedDevice(WeatherProvider weather) async {
-    final device = weather.selectedDevice;
-    if (device == null) return;
-    final user = context.read<AuthProvider>().user;
+  Future<void> _unpairDevice(String mac, AuthProvider auth, WeatherProvider weather) async {
+    final user = auth.user;
     if (user == null) return;
     final theme = context.read<ThemeProvider>().theme;
 
@@ -61,7 +58,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1E1B4B),
         title: Text(
-          'Unpair ${device.mac}',
+          'Unpair $mac',
           style: TextStyle(color: theme.textColor, fontSize: 16, fontWeight: FontWeight.w800),
         ),
         content: Text(
@@ -90,7 +87,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (confirmed != true) return;
 
     try {
-      await ClaimService().unclaimDevice(uid: user.uid, mac: device.mac);
+      await ClaimService().unclaimDevice(uid: user.uid, mac: mac);
       if (!mounted) return;
       await weather.refresh();
       if (!mounted) return;
@@ -99,7 +96,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           behavior: SnackBarBehavior.floating,
           backgroundColor: const Color(0xFF1E1B4B),
           content: Text(
-            'Unpaired ${device.mac}. The node resets to pairing mode on its next connection.',
+            'Unpaired $mac. The node resets to pairing mode on its next connection.',
             style: TextStyle(color: theme.textColor, fontSize: 13),
           ),
         ),
@@ -119,6 +116,91 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  void _navigateToOfflineDevice(String mac) {
+    Navigator.pushNamed(context, '/offline-device', arguments: mac);
+  }
+
+  void _showOfflineDeviceDialog() {
+    final theme = context.read<ThemeProvider>().theme;
+    final macController = TextEditingController();
+    
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1B4B),
+        title: Text(
+          'Connect to Offline Device',
+          style: TextStyle(color: theme.textColor, fontSize: 18, fontWeight: FontWeight.w800),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Enter the device MAC address (12 hex characters) to connect to its hotspot.',
+              style: TextStyle(color: theme.textColor.withAlpha(180), fontSize: 13, height: 1.4),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: macController,
+              style: TextStyle(color: theme.textColor),
+              decoration: InputDecoration(
+                hintText: 'A1B2C3D4E5F6',
+                hintStyle: TextStyle(color: theme.textColor.withAlpha(100)),
+                labelText: 'MAC Address',
+                labelStyle: TextStyle(color: theme.textColor.withAlpha(150)),
+                filled: true,
+                fillColor: Colors.black.withAlpha(40),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: Colors.white.withAlpha(30)),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: Colors.white.withAlpha(30)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: theme.textColor.withAlpha(160), width: 1.5),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'On the device: Press the wake button 3 times quickly to enable hotspot mode.\n'
+              'The device will display the hotspot name and password.',
+              style: TextStyle(
+                fontSize: 11,
+                color: theme.textColor.withAlpha(120),
+                height: 1.4,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text('Cancel', style: TextStyle(color: theme.textColor)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final mac = macController.text.trim().toUpperCase().replaceAll(RegExp(r'[:-]'), '');
+              if (RegExp(r'^[A-F0-9]{12}$').hasMatch(mac)) {
+                Navigator.of(ctx).pop();
+                _navigateToOfflineDevice(mac);
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF6366F1),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Connect'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
@@ -135,8 +217,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final theme = themeProvider.theme;
     final devices = weather.devices;
     final selectedDevice = weather.selectedDevice;
+    final user = auth.user;
 
     return Scaffold(
+      key: _scaffoldKey,
+      drawer: _buildDrawer(theme, user, weather, auth),
       body: Container(
         decoration: BoxDecoration(
           gradient: theme.gradient,
@@ -154,72 +239,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Expanded(
-                          child: Row(
-                            children: [
-                              Image.asset('assets/logo.png', width: 22, height: 22),
-                              const SizedBox(width: 8),
-                              Text(
-                                'Meteorologus',
-                                style: TextStyle(
-                                  fontSize: 19,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: -0.5,
-                                  color: theme.textColor,
-                                ),
-                              ),
-                              if (devices.isNotEmpty) ...[
-                                const SizedBox(width: 6),
-                                Flexible(
-                                  child: DeviceSelector(
-                                    devices: devices,
-                                    selectedDevice: selectedDevice,
-                                    onSelected: (d) => weather.selectDevice(d),
-                                    onClaimNew: () => _openClaimDialog(),
-                                    textColor: theme.textColor,
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 8),
+                        // Menu button + Title
                         Row(
-                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            // Claim device button
-                            _HeaderIconButton(
-                              icon: Icons.add,
-                              tooltip: 'Claim node',
-                              textColor: theme.textColor,
-                              onPressed: () => _openClaimDialog(),
+                            IconButton(
+                              icon: Icon(Icons.menu, color: theme.textColor, size: 26),
+                              onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+                              tooltip: 'Menu',
                             ),
-                            const SizedBox(width: 5),
-                            // Unpair button for the selected device
-                            _HeaderIconButton(
-                              icon: Icons.link_off,
-                              tooltip: 'Unpair node',
-                              textColor: theme.textColor,
-                              onPressed: () => _unpairSelectedDevice(weather),
-                            ),
-                            const SizedBox(width: 5),
-                            // Refresh button
-                            _HeaderIconButton(
-                              icon: Icons.refresh,
-                              tooltip: 'Refresh',
-                              textColor: theme.textColor,
-                              onPressed: weather.refresh,
-                            ),
-                            const SizedBox(width: 5),
-                            // Sign out button
-                            _HeaderIconButton(
-                              icon: Icons.logout,
-                              tooltip: 'Sign out',
-                              textColor: theme.textColor,
-                              onPressed: auth.signOut,
+                            const SizedBox(width: 4),
+                            Image.asset('assets/logo.png', width: 22, height: 22),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Meteorologus',
+                              style: TextStyle(
+                                fontSize: 19,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.5,
+                                color: theme.textColor,
+                              ),
                             ),
                           ],
                         ),
+                        // Device selector (if devices exist)
+                        if (devices.isNotEmpty)
+                          Flexible(
+                            child: DeviceSelector(
+                              devices: devices,
+                              selectedDevice: selectedDevice,
+                              onSelected: (d) => weather.selectDevice(d),
+                              onClaimNew: () => _openClaimDialog(),
+                              textColor: theme.textColor,
+                            ),
+                          ),
                       ],
                     ),
 
@@ -272,6 +324,190 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDrawer(dynamic theme, User? user, WeatherProvider weather, AuthProvider auth) {
+    final devices = weather.devices;
+    
+    return Drawer(
+      backgroundColor: const Color(0xFF1E1B4B),
+      child: SafeArea(
+        child: Column(
+          children: [
+            // Header
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(color: Colors.white.withAlpha(30)),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Image.asset('assets/logo.png', width: 32, height: 32),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Meteorologus',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: theme.textColor,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // User info
+            if (user != null) ...[
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(color: Colors.white.withAlpha(20)),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      backgroundColor: const Color(0xFF6366F1),
+                      child: Text(
+                        user.email?.substring(0, 1).toUpperCase() ?? 'U',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            user.email ?? 'Unknown',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: theme.textColor,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text(
+                            '${devices.length} device${devices.length != 1 ? 's' : ''}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: theme.textColor.withAlpha(120),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
+            // Navigation items
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                children: [
+                  _DrawerItem(
+                    icon: Icons.dashboard,
+                    label: 'Dashboard',
+                    onTap: () => Navigator.pop(context),
+                    isSelected: true,
+                    textColor: theme.textColor,
+                  ),
+                  _DrawerItem(
+                    icon: Icons.devices,
+                    label: 'My Devices (${devices.length})',
+                    onTap: () => Navigator.pop(context),
+                    textColor: theme.textColor,
+                  ),
+                  if (devices.isNotEmpty) ...[
+                    const Divider(color: Colors.white24, indent: 16, endIndent: 16),
+                    ...devices.map((device) => Column(
+                      children: [
+                        _DrawerItem(
+                          icon: Icons.bluetooth_connected,
+                          label: device.formattedMac,
+                          onTap: () {
+                            Navigator.pop(context);
+                            weather.selectDevice(device);
+                          },
+                          textColor: theme.textColor,
+                        ),
+                        _DrawerItem(
+                          icon: Icons.link_off,
+                          label: 'Unpair ${device.formattedMac}',
+                          onTap: () {
+                            Navigator.pop(context);
+                            _unpairDevice(device.mac, auth, weather);
+                          },
+                          textColor: theme.textColor,
+                          isDestructive: true,
+                        ),
+                      ],
+                    )),
+                  ],
+                  const Divider(color: Colors.white24, indent: 16, endIndent: 16),
+                  _DrawerItem(
+                    icon: Icons.add_circle_outline,
+                    label: 'Claim New Device',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _openClaimDialog();
+                    },
+                    textColor: theme.textColor,
+                  ),
+                  _DrawerItem(
+                    icon: Icons.wifi_find,
+                    label: 'Connect Offline Device',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _showOfflineDeviceDialog();
+                    },
+                    textColor: theme.textColor,
+                  ),
+                  const Divider(color: Colors.white24, indent: 16, endIndent: 16),
+                  _DrawerItem(
+                    icon: Icons.history,
+                    label: 'View History',
+                    onTap: () => Navigator.pop(context),
+                    textColor: theme.textColor,
+                  ),
+                  _DrawerItem(
+                    icon: Icons.settings,
+                    label: 'Settings',
+                    onTap: () => Navigator.pop(context),
+                    textColor: theme.textColor,
+                  ),
+                ],
+              ),
+            ),
+
+            // Sign out
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                border: Border(
+                  top: BorderSide(color: Colors.white.withAlpha(20)),
+                ),
+              ),
+              child: _DrawerItem(
+                icon: Icons.logout,
+                label: 'Sign Out',
+                onTap: () {
+                  Navigator.pop(context);
+                  auth.signOut();
+                },
+                textColor: theme.textColor,
+                isDestructive: true,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -366,42 +602,50 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
-class _HeaderIconButton extends StatelessWidget {
+class _DrawerItem extends StatelessWidget {
   final IconData icon;
-  final String tooltip;
+  final String label;
+  final VoidCallback onTap;
   final Color textColor;
-  final VoidCallback onPressed;
+  final bool isSelected;
+  final bool isDestructive;
 
-  const _HeaderIconButton({
+  const _DrawerItem({
     required this.icon,
-    required this.tooltip,
+    required this.label,
+    required this.onTap,
     required this.textColor,
-    required this.onPressed,
+    this.isSelected = false,
+    this.isDestructive = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(18),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.white.withAlpha(35),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: Colors.white.withAlpha(50)),
-            ),
-            child: Icon(
-              icon,
-              size: 15,
-              color: textColor,
-            ),
+    final color = isDestructive ? const Color(0xFFFB7185) : textColor;
+    final bgColor = isSelected 
+        ? const Color(0xFF6366F1).withAlpha(50)
+        : Colors.transparent;
+    
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(10),
+        border: isSelected ? Border.all(color: const Color(0xFF6366F1), width: 1) : null,
+      ),
+      child: ListTile(
+        leading: Icon(icon, color: color, size: 22),
+        title: Text(
+          label,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: color,
           ),
         ),
+        onTap: onTap,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       ),
     );
   }

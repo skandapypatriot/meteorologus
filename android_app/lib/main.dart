@@ -9,6 +9,7 @@ import 'providers/theme_provider.dart';
 import 'providers/weather_provider.dart';
 import 'views/auth/auth_screen.dart';
 import 'views/dashboard/dashboard_screen.dart';
+import 'views/offline/offline_device_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -61,6 +62,9 @@ class MeteorologusApp extends StatelessWidget {
               ),
             ),
             home: const AppRoot(),
+            routes: {
+              '/offline-device': (context) => const OfflineDeviceScreenWrapper(),
+            },
           );
         },
       ),
@@ -78,5 +82,15 @@ class AppRoot extends StatelessWidget {
       return const DashboardScreen();
     }
     return const AuthScreen();
+  }
+}
+
+class OfflineDeviceScreenWrapper extends StatelessWidget {
+  const OfflineDeviceScreenWrapper({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final args = ModalRoute.of(context)?.settings.arguments as String?;
+    return OfflineDeviceScreen(deviceMac: args ?? '');
   }
 }

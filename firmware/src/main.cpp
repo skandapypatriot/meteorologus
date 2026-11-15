@@ -119,6 +119,18 @@
 #define CLAIM_WEB_BASE "https://weather-monitor-f4248.web.app/"
 #define DEEP_SLEEP_DURATION_US 5400000000ULL  // 1hour
 #define POWER_PIN 10
+
+// --- OFFLINE MODE ---
+// When enabled, the node never connects to WiFi. Inference runs locally and
+// is stored in flash. Triple-press the wake button to enable hotspot mode
+// for data retrieval. Long-press to exit hotspot mode.
+#define OFFLINE_MODE_ENABLED 1
+#define HOTSPOT_TIMEOUT_MS 600000UL  // 10 minutes no-client timeout
+#define HOTSPOT_SSID_PREFIX "MeteoData-"
+#define HOTSPOT_PASSWORD "weather123"
+#define BUTTON_TRIPLE_PRESS_WINDOW 1500  // ms to detect 3 presses
+#define BUTTON_LONG_PRESS_DURATION 2000  // ms for long press
+#define HOTSPOT_API_PORT 80
   
 
 int currentScreen = 0;
@@ -138,6 +150,34 @@ unsigned long wifi_portal_reconnect_started = 0;
 unsigned long wifi_offline_seconds = 0;
 const unsigned long FIREBASE_SYNC_INTERVAL = 12000; // 12 seconds
 SemaphoreHandle_t fb_mutex = NULL;
+
+// --- OFFLINE MODE STATE ---
+bool offline_mode = false;           // Master offline mode flag (persisted)
+bool hotspot_active = false;         // Hotspot currently running
+bool hotspot_mode_triggered = false; // Triple-press detected, entering hotspot
+unsigned long hotspot_start_time = 0;
+unsigned long last_client_activity = 0;
+int button_press_count = 0;
+unsigned long first_press_time = 0;
+bool button_held = false;
+unsigned long button_press_start = 0;
+WebServer hotspot_server(HOTSPOT_API_PORT);
+int connected_station_count = 0;
+
+// Inference storage
+struct InferenceRecord {
+  long ts;
+  float temp;
+  float humidity;
+  float pressure;
+  int currentWeatherCode;
+  int forecastCodes[3];
+  bool valid;
+};
+#define MAX_INFERENCE_RECORDS 50
+InferenceRecord inference_history[MAX_INFERENCE_RECORDS];
+int inference_count = 0;
+int inference_head = 0;
 
 // Sensor Instances
 DHT dht(DHTPIN, DHTTYPE); 
@@ -468,7 +508,7 @@ void log_wifi_scan() {
   LOGF("[wifi] Scan found %d network(s):\n", n);
   if (n < 0) { LOGF("[wifi] Scan failed (%d)\n", n); return; }
   for (int i = 0; i < n && i < 10; i++) {
-    LOGF("[wifi]   %-22s RSSI=%d AUTH=%d\n", WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.encryptionType(i));
+    LOGF("[wifi]   %-22s RSSI=%d AUTH=%ld\n", WiFi.SSID(i).c_str(), WiFi.RSSI(i), (long)WiFi.encryptionType(i));
   }
   WiFi.scanDelete();
 }
@@ -685,6 +725,255 @@ void reset_device_identity() {
   wifi_ssid = WIFI_SSID;
   wifi_password = WIFI_PASS;
   wifi_offline_seconds = 0;
+}
+
+// --- OFFLINE MODE FUNCTIONS ---
+
+void load_offline_mode() {
+  Preferences prefs;
+  prefs.begin("offline", true);
+  offline_mode = prefs.getBool("enabled", false);
+  prefs.end();
+  LOGF("[offline] Mode loaded: %s\n", offline_mode ? "ENABLED" : "DISABLED");
+}
+
+void save_offline_mode(bool enabled) {
+  Preferences prefs;
+  prefs.begin("offline", false);
+  prefs.putBool("enabled", enabled);
+  prefs.end();
+  offline_mode = enabled;
+  LOGF("[offline] Mode saved: %s\n", enabled ? "ENABLED" : "DISABLED");
+}
+
+void load_inference_history() {
+  Preferences prefs;
+  prefs.begin("inference", true);
+  inference_count = prefs.getInt("count", 0);
+  inference_head = prefs.getInt("head", 0);
+  for (int i = 0; i < MAX_INFERENCE_RECORDS; i++) {
+    String key = "rec" + String(i);
+    size_t len = prefs.getBytesLength(key.c_str());
+    if (len == sizeof(InferenceRecord)) {
+      prefs.getBytes(key.c_str(), &inference_history[i], sizeof(InferenceRecord));
+    } else {
+      inference_history[i].valid = false;
+    }
+  }
+  prefs.end();
+  LOGF("[offline] Loaded %d inference records\n", inference_count);
+}
+
+void save_inference_record(const InferenceRecord &rec) {
+  Preferences prefs;
+  prefs.begin("inference", false);
+  
+  inference_history[inference_head] = rec;
+  inference_head = (inference_head + 1) % MAX_INFERENCE_RECORDS;
+  if (inference_count < MAX_INFERENCE_RECORDS) inference_count++;
+  
+  prefs.putInt("count", inference_count);
+  prefs.putInt("head", inference_head);
+  
+  String key = "rec" + String(inference_head);
+  prefs.putBytes(key.c_str(), &rec, sizeof(InferenceRecord));
+  
+  prefs.end();
+  LOGF("[offline] Saved inference record #%d (total: %d)\n", inference_head, inference_count);
+}
+
+void store_current_inference() {
+  if (!time_ok()) return;
+  
+  InferenceRecord rec;
+  rec.ts = get_epoch();
+  rec.temp = temp;
+  rec.humidity = humidity;
+  rec.pressure = pressure;
+  
+  if (fb_mutex && xSemaphoreTake(fb_mutex, 100)) {
+    rec.currentWeatherCode = currentWeatherCode;
+    rec.forecastCodes[0] = forecastCodes[0];
+    rec.forecastCodes[1] = forecastCodes[1];
+    rec.forecastCodes[2] = forecastCodes[2];
+    xSemaphoreGive(fb_mutex);
+  } else {
+    rec.currentWeatherCode = -1;
+    rec.forecastCodes[0] = rec.forecastCodes[1] = rec.forecastCodes[2] = -1;
+  }
+  rec.valid = true;
+  
+  save_inference_record(rec);
+}
+
+void handle_hotspot_api() {
+  DynamicJsonDocument doc(8192);
+  JsonObject latest = doc.createNestedObject("latest");
+  JsonArray forecast = doc.createNestedArray("forecast");
+  JsonArray history = doc.createNestedArray("history");
+  
+  // Latest record
+  if (inference_count > 0) {
+    int idx = (inference_head - 1 + MAX_INFERENCE_RECORDS) % MAX_INFERENCE_RECORDS;
+    InferenceRecord &rec = inference_history[idx];
+    if (rec.valid) {
+      latest["ts"] = rec.ts;
+      latest["temp"] = rec.temp;
+      latest["humidity"] = rec.humidity;
+      latest["pressure"] = rec.pressure;
+      latest["currentWeatherCode"] = rec.currentWeatherCode;
+      latest["valid"] = true;
+    }
+  }
+  
+  // Current forecast
+  if (fb_mutex && xSemaphoreTake(fb_mutex, 100)) {
+    forecast.add(currentWeatherCode);
+    forecast.add(forecastCodes[0]);
+    forecast.add(forecastCodes[1]);
+    forecast.add(forecastCodes[2]);
+    xSemaphoreGive(fb_mutex);
+  } else {
+    forecast.add(-1); forecast.add(-1); forecast.add(-1); forecast.add(-1);
+  }
+  
+  // History
+  for (int i = 0; i < inference_count; i++) {
+    int idx = (inference_head - 1 - i + MAX_INFERENCE_RECORDS) % MAX_INFERENCE_RECORDS;
+    InferenceRecord &rec = inference_history[idx];
+    if (rec.valid) {
+      JsonObject h = history.createNestedObject();
+      h["ts"] = rec.ts;
+      h["temp"] = rec.temp;
+      h["humidity"] = rec.humidity;
+      h["pressure"] = rec.pressure;
+      h["currentWeatherCode"] = rec.currentWeatherCode;
+      JsonArray fc = h.createNestedArray("forecastCodes");
+      fc.add(rec.forecastCodes[0]);
+      fc.add(rec.forecastCodes[1]);
+      fc.add(rec.forecastCodes[2]);
+      h["valid"] = true;
+    }
+  }
+  
+  doc["deviceId"] = device_id;
+  doc["offlineMode"] = offline_mode;
+  doc["hotspotActive"] = hotspot_active;
+  doc["connectedClients"] = connected_station_count;
+  doc["inferenceCount"] = inference_count;
+  doc["uptime"] = millis();
+  doc["freeHeap"] = ESP.getFreeHeap();
+  
+  String output;
+  serializeJson(doc, output);
+  hotspot_server.send(200, "application/json", output);
+}
+
+void handle_hotspot_root() {
+  // Simple redirect to API endpoint
+  hotspot_server.sendHeader("Location", "/api/data");
+  hotspot_server.send(302, "text/plain", "Redirecting to API");
+}
+
+void start_hotspot_mode() {
+  if (hotspot_active) return;
+  
+  LOGLN("[hotspot] Starting hotspot mode...");
+  
+  // Stop any existing WiFi
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  delay(100);
+  
+  // Start AP mode
+  String ap_name = String(HOTSPOT_SSID_PREFIX) + device_id.substring(6);
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(ap_name.c_str(), HOTSPOT_PASSWORD);
+  
+  hotspot_server.on("/", HTTP_GET, handle_hotspot_root);
+  hotspot_server.on("/api/data", HTTP_GET, handle_hotspot_api);
+  hotspot_server.begin();
+  
+  hotspot_active = true;
+  hotspot_start_time = millis();
+  last_client_activity = millis();
+  connected_station_count = 0;
+  
+  LOGF("[hotspot] AP started: %s (IP: %s)\n", ap_name.c_str(), WiFi.softAPIP().toString().c_str());
+}
+
+void stop_hotspot_mode() {
+  if (!hotspot_active) return;
+  
+  LOGLN("[hotspot] Stopping hotspot mode...");
+  
+  hotspot_server.stop();
+  WiFi.softAPdisconnect(true);
+  WiFi.mode(WIFI_OFF);
+  
+  hotspot_active = false;
+  hotspot_mode_triggered = false;
+  connected_station_count = 0;
+  
+  LOGLN("[hotspot] Hotspot stopped");
+}
+
+void update_connected_stations() {
+  connected_station_count = WiFi.softAPgetStationNum();
+  if (connected_station_count > 0) {
+    last_client_activity = millis();
+  }
+}
+
+void check_hotspot_timeout() {
+  if (!hotspot_active) return;
+  
+  update_connected_stations();
+  
+  // Check 10-minute timeout with no clients
+  if (connected_station_count == 0 && (millis() - last_client_activity > HOTSPOT_TIMEOUT_MS)) {
+    LOGLN("[hotspot] No clients for 10 minutes, stopping hotspot");
+    stop_hotspot_mode();
+  }
+}
+
+void draw_hotspot_screen() {
+  u8g2.clearBuffer();
+  
+  String ap_name = String(HOTSPOT_SSID_PREFIX) + device_id.substring(6);
+  
+  // Title
+  u8g2.setFont(u8g2_font_profont11_tr);
+  u8g2.drawStr(2, 10, "HOTSPOT ACTIVE");
+  u8g2.drawHLine(0, 14, 128);
+  
+  // Hotspot name
+  u8g2.setFont(u8g2_font_profont10_tr);
+  u8g2.drawStr(2, 26, "Hosting inference");
+  u8g2.drawStr(2, 36, "data in hotspot:");
+  u8g2.setFont(u8g2_font_profont11_tr);
+  
+  // SSID (may need truncation)
+  String ssid_display = ap_name;
+  if (u8g2.getStrWidth(ssid_display.c_str()) > 124) {
+    ssid_display = ssid_display.substring(0, 16) + "..";
+  }
+  u8g2.drawStr(2, 48, ssid_display.c_str());
+  
+  // Password hint
+  u8g2.setFont(u8g2_font_profont10_tr);
+  u8g2.drawStr(2, 56, "Pass: weather123");
+  
+  // Client count
+  char clientBuf[32];
+  sprintf(clientBuf, "Clients: %d", connected_station_count);
+  u8g2.drawStr(2, 62, clientBuf);
+  
+  // Bottom hint
+  u8g2.setFont(u8g2_font_4x6_tf);
+  u8g2.drawStr(2, 64, "Long press to exit | Auto-off in 10min if no clients");
+  
+  u8g2.sendBuffer();
 }
 
 // Check whether the owner unpaired this device on the dashboard: the claim
@@ -1348,13 +1637,25 @@ void update_gui() {
     return;
   }
 
+  // Hotspot mode screen
+  if (hotspot_active) {
+    draw_hotspot_screen();
+    return;
+  }
+
   u8g2.firstPage();
   do {
-
-      if (current_screen == 0) draw_screen_one();
-      else if (current_screen == 1) draw_screen_two();
-      else if (current_screen == 2) draw_screen_three();
-      else draw_screen_four();
+      // In offline mode, show simplified screens (no WiFi status screen)
+      if (offline_mode) {
+        if (current_screen == 0) draw_screen_one();
+        else if (current_screen == 1) draw_screen_three(); // Skip WiFi screen, go to forecast
+        else draw_screen_four();
+      } else {
+        if (current_screen == 0) draw_screen_one();
+        else if (current_screen == 1) draw_screen_two();
+        else if (current_screen == 2) draw_screen_three();
+        else draw_screen_four();
+      }
 
   } while (u8g2.nextPage()); 
 }
@@ -1438,50 +1739,76 @@ void setup() {
   delay(200); 
 #endif
   // Initial read & sync process before UI starts cycling
-  esp_wifi_set_ps(WIFI_PS_NONE);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin();   
-  delay(500);
+  
+  // Load offline mode setting
+  load_offline_mode();
+  load_inference_history();
+  
   device_id = get_device_id();
-  load_wifi_credentials();
   device_key = get_stored_device_key();
   device_claimed = (device_key.length() > 0);
-
-  check_wifi_status();
-  sync_time(); // NTP is the only time source; re-synced on every wakeup
-
-  // Device identity: clean MAC, then check NVS for a stored claim token.
-  LOGF("[provision] Device ID (MAC): %s\n", device_id.c_str());
-
-  if (device_claimed) {
-    LOGLN("[provision] Stored claim key present, device is claimed.");
-    // Handle a dashboard-side unpair: returns to pairing mode if the claim went away.
-    check_claim_revoked();
-  } else {
-    LOGLN("[provision] No stored key - checking cloud for a claim...");
-    check_remote_provisioning();
-    if (!device_claimed) LOGLN("[provision] Not claimed yet - showing QR code.");
-  }
-  last_provision_check = millis();
-  if (wifi_portal_required()) start_wifi_portal();
   
-  // Quick initial sensor read (skipped while unpaired - provisioning mode)
-  if (device_claimed) read_sensors();
-
-  fb_mutex = xSemaphoreCreateMutex();
-  if (device_claimed) {
-    // Run local model inference as the baseline; a fresh Firebase forecast overrides it.
+  LOGF("[provision] Device ID (MAC): %s\n", device_id.c_str());
+  LOGF("[offline] Offline mode: %s\n", offline_mode ? "ENABLED" : "DISABLED");
+  
+  if (offline_mode) {
+    // OFFLINE MODE: Never connect to WiFi, no radio
+    LOGLN("[offline] Offline mode active - WiFi disabled");
+    WiFi.mode(WIFI_OFF);
+    wifi_available = false;
+    
+    // Still run local inference and store in flash
+    read_sensors();
     run_local_prediction();
-    if (fb_mutex != NULL) {
-      // Blocking initial sync. If no forecast came back (first TLS call often
-      // needs a retry), the very first loop() iteration will try again before
-      // any screen is drawn, so the WiFi screen shows "Forecast: Firebase".
-      fb_sync_first = !fetch_and_sync_firebase();
-    }
-    last_fb_sync = millis();
-    print_sensor_data();       // Logs to terminal
+    store_current_inference();
+    print_sensor_data();
+    
+    // Setup button for triple-press detection
+    pinMode(WAKE_BUTTON_PIN, INPUT_PULLUP);
   } else {
-    fb_sync_first = false;     // nothing to sync until the device is claimed
+    // NORMAL MODE: Connect to WiFi
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin();   
+    delay(500);
+    load_wifi_credentials();
+    
+    check_wifi_status();
+    sync_time(); // NTP is the only time source; re-synced on every wakeup
+
+    // Device identity: clean MAC, then check NVS for a stored claim token.
+    LOGF("[provision] Device ID (MAC): %s\n", device_id.c_str());
+
+    if (device_claimed) {
+      LOGLN("[provision] Stored claim key present, device is claimed.");
+      // Handle a dashboard-side unpair: returns to pairing mode if the claim went away.
+      check_claim_revoked();
+    } else {
+      LOGLN("[provision] No stored key - checking cloud for a claim...");
+      check_remote_provisioning();
+      if (!device_claimed) LOGLN("[provision] Not claimed yet - showing QR code.");
+    }
+    last_provision_check = millis();
+    if (wifi_portal_required()) start_wifi_portal();
+    
+    // Quick initial sensor read (skipped while unpaired - provisioning mode)
+    if (device_claimed) read_sensors();
+
+    fb_mutex = xSemaphoreCreateMutex();
+    if (device_claimed) {
+      // Run local model inference as the baseline; a fresh Firebase forecast overrides it.
+      run_local_prediction();
+      if (fb_mutex != NULL) {
+        // Blocking initial sync. If no forecast came back (first TLS call often
+        // needs a retry), the very first loop() iteration will try again before
+        // any screen is drawn, so the WiFi screen shows "Forecast: Firebase".
+        fb_sync_first = !fetch_and_sync_firebase();
+      }
+      last_fb_sync = millis();
+      print_sensor_data();       // Logs to terminal
+    } else {
+      fb_sync_first = false;     // nothing to sync until the device is claimed
+    }
   }
   
   last_screen_switch = millis();
@@ -1491,20 +1818,90 @@ void setup() {
 void loop() {
   unsigned long now = millis();
 
+  // --- BUTTON HANDLING (works in both offline and online modes) ---
+  bool button_state = digitalRead(WAKE_BUTTON_PIN) == LOW; // Active low with pullup
+  
+  if (button_state && !button_held) {
+    // Button just pressed
+    button_held = true;
+    button_press_start = now;
+    
+    if (button_press_count == 0) {
+      first_press_time = now;
+    }
+    button_press_count++;
+    LOGF("[button] Press #%d\n", button_press_count);
+  } else if (!button_state && button_held) {
+    // Button released
+    button_held = false;
+    unsigned long press_duration = now - button_press_start;
+    
+    // Check for long press (2 seconds)
+    if (press_duration >= BUTTON_LONG_PRESS_DURATION) {
+      LOGLN("[button] Long press detected");
+      if (hotspot_active) {
+        stop_hotspot_mode();
+        hotspot_mode_triggered = false;
+      }
+      button_press_count = 0;
+    }
+  }
+  
+  // Check for triple press timeout
+  if (button_press_count > 0 && (now - first_press_time > BUTTON_TRIPLE_PRESS_WINDOW)) {
+    if (button_press_count >= 3) {
+      LOGLN("[button] Triple press detected - entering hotspot mode");
+      if (offline_mode && !hotspot_active) {
+        hotspot_mode_triggered = true;
+        start_hotspot_mode();
+      }
+    }
+    button_press_count = 0;
+  }
+
+  // --- HOTSPOT MODE HANDLING ---
+  if (hotspot_active) {
+    hotspot_server.handleClient();
+    check_hotspot_timeout();
+    
+    // Show hotspot screen
+    #if !HEADLESS_MODE
+    if (gui_dirty || now - lastguiupdate >= 1000) {
+      draw_hotspot_screen();
+      lastguiupdate = now;
+      gui_dirty = false;
+    }
+    #endif
+    
+    // In hotspot mode, don't sleep if clients connected
+    if (connected_station_count > 0) {
+      boot_done = now; // Reset sleep timer
+      sleep_triggered = false;
+    }
+    
+    // Still read sensors periodically in hotspot mode
+    if (now - lastsensorupdate >= SENSOR_UPDATE) {
+      lastsensorupdate = now;
+      read_sensors();
+      run_local_prediction();
+      store_current_inference();
+    }
+    
+    return; // Skip normal processing while hotspot active
+  }
+
   if (wifi_portal_active) {
     handle_wifi_portal();
     return;
   }
 
-  // 1. Read Sensors Periodically (skipped entirely while unpaired)
-  if (now - lastsensorupdate >= SENSOR_UPDATE){
-    lastsensorupdate = now;
-
-    if (device_claimed) {
+  // --- OFFLINE MODE: Periodic sensor reading and inference ---
+  if (offline_mode) {
+    if (now - lastsensorupdate >= SENSOR_UPDATE) {
+      lastsensorupdate = now;
       read_sensors();
-      print_sensor_data();
-
-      // Run local model once the readings settle (data no longer changing)
+      
+      // Run local model once the readings settle
       if (!stable_prediction_done) {
         if (!isnan(temp) && !isnan(humidity) && !isnan(pressure) && !isnan(prev_temp) &&
             fabs(temp - prev_temp) < 0.3F &&
@@ -1514,6 +1911,7 @@ void loop() {
           if (stable_count >= 3) {
             stable_prediction_done = true;
             run_local_prediction();
+            store_current_inference();
           }
         } else {
           stable_count = 0;
@@ -1523,6 +1921,36 @@ void loop() {
       prev_hum = humidity;
       prev_pres = pressure;
     }
+  } else {
+    // --- ONLINE MODE: Normal sensor reading ---
+    if (now - lastsensorupdate >= SENSOR_UPDATE){
+      lastsensorupdate = now;
+
+      if (device_claimed) {
+        read_sensors();
+        print_sensor_data();
+
+        // Run local model once the readings settle (data no longer changing)
+        if (!stable_prediction_done) {
+          if (!isnan(temp) && !isnan(humidity) && !isnan(pressure) && !isnan(prev_temp) &&
+              fabs(temp - prev_temp) < 0.3F &&
+              fabs(humidity - prev_hum) < 1.0F &&
+              fabs(pressure - prev_pres) < 0.5F) {
+            stable_count++;
+            if (stable_count >= 3) {
+              stable_prediction_done = true;
+              run_local_prediction();
+              store_current_inference(); // Also store in flash for offline access
+            }
+          } else {
+            stable_count = 0;
+          }
+        }
+        prev_temp = temp;
+        prev_hum = humidity;
+        prev_pres = pressure;
+      }
+    }
   }
 
   // 2. Screen Transitions
@@ -1531,6 +1959,7 @@ void loop() {
       current_screen = (current_screen == 0) ? 1 : 0; // instructions <-> QR
     } else {
       int last_screen = (gas_sensor != GasSensor::NONE) ? 3 : 2; // +1 screen (Air Quality) with a BME680
+      if (offline_mode) last_screen = 2; // In offline mode, show fewer screens
       current_screen++;
       if (current_screen > last_screen) current_screen = 0;
       // Re-run local model whenever the forecast/prediction screen is shown
@@ -1542,9 +1971,7 @@ void loop() {
     gui_dirty = true;
   }
 
-  // 3. Update OLED - while unpaired the display is stationary and only
-  //    redrawn when the screen switches; paired screens refresh every second.
-  //    Skipped entirely in headless builds (no display wired up).
+  // 3. Update OLED
 #if !HEADLESS_MODE
   if (gui_dirty || (device_claimed && now - lastguiupdate >= OLED_UPDATE)) {
       update_gui();
@@ -1562,8 +1989,8 @@ void loop() {
   }
 #endif
 
-  // 4. Firebase Sync (blocking, delay-scheduled)
-  if (fb_sync_first || now - last_fb_sync >= FIREBASE_SYNC_INTERVAL) {
+  // 4. Firebase Sync (blocking, delay-scheduled) - only in online mode
+  if (!offline_mode && (fb_sync_first || now - last_fb_sync >= FIREBASE_SYNC_INTERVAL)) {
       fb_sync_first = false;
       fetch_and_sync_firebase();  
       last_fb_sync = millis();
@@ -1583,7 +2010,7 @@ void loop() {
 
   // 5. While unpaired: stay awake, keep retrying WiFi, and poll the cloud for
   //    a claim so a fresh claim is picked up without a reboot.
-  if (!device_claimed && (now - last_provision_check >= PROVISION_RECHECK_INTERVAL)) {
+  if (!offline_mode && !device_claimed && (now - last_provision_check >= PROVISION_RECHECK_INTERVAL)) {
       last_provision_check = now;
       if (!wifi_available) {
         check_wifi_status();   // keep trying to join the network
@@ -1608,7 +2035,7 @@ void loop() {
 
   // Paired devices also retry periodically so a prolonged outage can enter
   // setup mode without requiring a button press or reboot.
-  if (device_claimed && !wifi_available &&
+  if (!offline_mode && device_claimed && !wifi_available &&
       (now - last_provision_check >= PROVISION_RECHECK_INTERVAL)) {
       last_provision_check = now;
       check_wifi_status();
@@ -1617,8 +2044,14 @@ void loop() {
 
   // 6. Deep Sleep Trigger (Happens after staying awake for AWAKE_DURATION)
   //    Only when paired - an unclaimed node stays awake showing the QR code.
-  if (now - boot_done > AWAKE_DURATION && !sleep_triggered && device_claimed) {
-     sleep_triggered = true; // Set to true so it never enters here again
+  //    In offline mode, also sleep after AWAKE_DURATION unless hotspot is active
+  bool can_sleep = !sleep_triggered && device_claimed;
+  if (offline_mode) {
+    can_sleep = !sleep_triggered && !hotspot_active && (connected_station_count == 0);
+  }
+  
+  if (can_sleep && (now - boot_done > AWAKE_DURATION)) {
+     sleep_triggered = true;
      enterDeepSleep();
   }
 }

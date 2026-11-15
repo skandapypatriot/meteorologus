@@ -2,7 +2,9 @@ import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/device_reading.dart';
+import '../models/offline_device_data.dart';
 import '../models/owned_device.dart';
 import '../config/firebase_options.dart';
 
@@ -13,6 +15,7 @@ class DatabaseService {
   );
 
   static const String _baseUrl = DefaultFirebaseOptions.databaseURL;
+  static const String _offlinePrefsPrefix = 'offline_readings_';
 
   Future<List<OwnedDevice>> getOwnedDevices(String uid) async {
     try {
@@ -96,5 +99,44 @@ class DatabaseService {
       list.sort((a, b) => (a.ts ?? 0).compareTo(b.ts ?? 0));
       return list;
     }).handleError((_) => <DeviceReading>[]);
+  }
+
+  Future<void> saveOfflineReading(
+    String uid,
+    String mac,
+    OfflineInferenceRecord record,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = '$_offlinePrefsPrefix$uid\_$mac';
+    final existing = prefs.getStringList(key) ?? [];
+    
+    final json = jsonEncode(record.toJson());
+    existing.insert(0, json);
+    
+    // Keep only last 100 records
+    if (existing.length > 100) {
+      existing.removeRange(100, existing.length);
+    }
+    
+    await prefs.setStringList(key, existing);
+  }
+
+  Future<List<OfflineInferenceRecord>> getOfflineReadings(
+    String uid,
+    String mac,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = '$_offlinePrefsPrefix$uid\_$mac';
+    final existing = prefs.getStringList(key) ?? [];
+    
+    return existing
+        .map((e) => OfflineInferenceRecord.fromJson(jsonDecode(e) as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> clearOfflineReadings(String uid, String mac) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = '$_offlinePrefsPrefix$uid\_$mac';
+    await prefs.remove(key);
   }
 }

@@ -43,6 +43,8 @@ dependencies:
   intl: ^0.20.3
   uuid: ^4.6.0
   mobile_scanner: ^7.4.0
+  network_info_plus: ^6.0.1
+  shared_preferences: ^2.5.3
 
 dev_dependencies:
   flutter_test:
