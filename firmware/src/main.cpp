@@ -735,9 +735,10 @@ void reset_device_identity() {
 void load_offline_mode() {
   Preferences prefs;
   prefs.begin("offline", true);
-  offline_mode = prefs.getBool("enabled", false);
+  // Use compile-time flag as default if NVS key doesn't exist
+  offline_mode = prefs.getBool("enabled", OFFLINE_MODE_ENABLED);
   prefs.end();
-  LOGF("[offline] Mode loaded: %s\n", offline_mode ? "ENABLED" : "DISABLED");
+  LOGF("[offline] Mode loaded: %s (compile-time default: %d)\n", offline_mode ? "ENABLED" : "DISABLED", OFFLINE_MODE_ENABLED);
 }
 
 void save_offline_mode(bool enabled) {
@@ -1747,12 +1748,25 @@ void setup() {
   load_offline_mode();
   load_inference_history();
   
+  // Initialize WiFi briefly to get MAC address (needed for both modes)
+  esp_wifi_set_ps(WIFI_PS_NONE);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin();
+  delay(100);
+  
   device_id = get_device_id();
   device_key = get_stored_device_key();
   device_claimed = (device_key.length() > 0);
   
+  // Create mutex early (needed for store_current_inference)
+  fb_mutex = xSemaphoreCreateMutex();
+  
+  // Compile-time flag takes precedence
+  #if OFFLINE_MODE_ENABLED
+  offline_mode = true;
+  #endif
   LOGF("[provision] Device ID (MAC): %s\n", device_id.c_str());
-  LOGF("[offline] Offline mode: %s\n", offline_mode ? "ENABLED" : "DISABLED");
+  LOGF("[offline] Offline mode: %s (compile-time: %d)\n", offline_mode ? "ENABLED" : "DISABLED", OFFLINE_MODE_ENABLED);
   
   if (offline_mode) {
     // OFFLINE MODE: Never connect to WiFi, no radio
@@ -1797,7 +1811,6 @@ void setup() {
     // Quick initial sensor read (skipped while unpaired - provisioning mode)
     if (device_claimed) read_sensors();
 
-    fb_mutex = xSemaphoreCreateMutex();
     if (device_claimed) {
       // Run local model inference as the baseline; a fresh Firebase forecast overrides it.
       run_local_prediction();
